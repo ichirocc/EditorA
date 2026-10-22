@@ -185,7 +185,7 @@ function pluginState(overrides = {}) {
 	};
 }
 
-test("plans transient AdMob removal without saving metadata", () => {
+test("plans AdMob removal for the free variant without reinstalling it", () => {
 	const actions = getAdmobSyncPlan({
 		variant: "free",
 		bundleExists: true,
@@ -194,10 +194,7 @@ test("plans transient AdMob removal without saving metadata", () => {
 
 	assert.deepEqual(
 		actions.map(({ command, args }) => [command, ...args]),
-		[
-			["cordova", "plugin", "remove", ADMOB_PLUGIN_ID, "--nosave"],
-			["cordova", "plugin", "add", "src/plugins/admob", "--nosave"],
-		],
+		[["cordova", "plugin", "remove", ADMOB_PLUGIN_ID, "--nosave"]],
 	);
 });
 
@@ -224,7 +221,7 @@ test("plans saved removal only for installed dependency state", () => {
 	);
 });
 
-test("free builds reinstall transient AdMob without changing tracked metadata", async () => {
+test("free builds remove AdMob without changing tracked metadata", async () => {
 	const fixture = createFixture({
 		id: ID_FREE,
 		admobInstalled: true,
@@ -242,14 +239,11 @@ test("free builds reinstall transient AdMob without changing tracked metadata", 
 	assert.equal(result.identityChanged, false);
 	assert.deepEqual(commands, [
 		["cordova", "plugin", "remove", ADMOB_PLUGIN_ID, "--nosave"],
-		["cordova", "plugin", "add", "src/plugins/admob", "--nosave"],
 	]);
 	assert.deepEqual(fixture.snapshot(), before);
 	assert.equal(
-		result.actions.every(
-			(action) => action.env?.NPM_CONFIG_LEGACY_PEER_DEPS === "true",
-		),
-		true,
+		fs.existsSync(path.join(fixture.rootDir, "plugins", ADMOB_PLUGIN_ID)),
+		false,
 	);
 });
 
@@ -393,13 +387,10 @@ test("repeated free configuration converges to identical tracked files", async (
 	});
 
 	assert.deepEqual(fixture.snapshot(), converged);
-	assert.deepEqual(secondCommands, [
-		["cordova", "plugin", "remove", ADMOB_PLUGIN_ID, "--nosave"],
-		["cordova", "plugin", "add", "src/plugins/admob", "--nosave"],
-	]);
+	assert.deepEqual(secondCommands, []);
 	assert.equal(
 		fs.existsSync(path.join(fixture.rootDir, "plugins", ADMOB_PLUGIN_ID)),
-		true,
+		false,
 	);
 });
 
@@ -420,13 +411,15 @@ test("fails when a successful command leaves dependency state behind", async () 
 	);
 });
 
-test("free builds fail clearly when the committed runtime bundle is missing", () => {
-	assert.throws(
-		() =>
-			getAdmobSyncPlan({
-				variant: "free",
-				bundleExists: false,
-			}),
-		/Run `npm run build:admob`/,
+test("free builds do not require or install the AdMob bundle", () => {
+	const actions = getAdmobSyncPlan({
+		variant: "free",
+		bundleExists: false,
+		admobState: pluginState({ installed: true }),
+	});
+
+	assert.deepEqual(
+		actions.map(({ command, args }) => [command, ...args]),
+		[["cordova", "plugin", "remove", ADMOB_PLUGIN_ID, "--nosave"]],
 	);
 });

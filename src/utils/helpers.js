@@ -4,7 +4,7 @@ import escapeStringRegexp from "escape-string-regexp";
 import adRewards from "lib/adRewards";
 import config from "lib/config";
 import fileIcons from "lib/fileIcons";
-import { interstitialAd, requestBannerForPage } from "lib/startAd";
+import { ADS_ENABLED, interstitialAd, requestBannerForPage } from "lib/startAd";
 import { isBinaryFile } from "./binaryExtensions";
 import { isPlayStoreInstall } from "./installSource";
 import path from "./Path";
@@ -250,6 +250,7 @@ export default {
 		editorManager.emit("update", "file-delete");
 	},
 	canShowAds() {
+		if (!ADS_ENABLED) return false;
 		return Boolean(!config.HAS_PRO && adRewards.canShowAds());
 	},
 	async showInterstitialIfReady() {

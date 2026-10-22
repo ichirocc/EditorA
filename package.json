@@ -17,6 +17,7 @@
     "format": "biome format --write",
     "check": "biome check --write",
     "check:admob-bundle": "node utils/scripts/checkAdmobBundle.js",
+    "check:ads-disabled": "node utils/scripts/checkOrdinaryAdsDisabled.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "updateAce": "node ./utils/updateAce.js",

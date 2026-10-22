@@ -34,9 +34,9 @@ const LOGO_TEXT = {
 };
 
 /**
- * Returns the Cordova operations required to converge the AdMob plugin state.
- * Free builds always reinstall the vendored plugin so native and web sources
- * cannot remain stale after a source change.
+ * Returns the Cordova operations required to keep AdMob out of every variant.
+ * Free builds previously reinstalled the vendored plugin; this security build
+ * removes it and does not add it back.
  *
  * @param {{
  *   variant:"free"|"paid",
@@ -54,25 +54,11 @@ function getAdmobSyncPlan({
 	if (!VARIANTS.has(variant)) {
 		throw new Error(`Unsupported app variant: ${variant}`);
 	}
-
-	if (variant === "free" && !bundleExists) {
-		throw new Error(
-			"Missing src/plugins/admob/www/admob.js. Run `npm run build:admob` before building the free app.",
-		);
-	}
+	void bundleExists;
 
 	const actions = [];
 	addRemoval(LEGACY_CONSENT_PLUGIN_ID, legacyConsentState);
 	addRemoval(ADMOB_PLUGIN_ID, admobState);
-
-	if (variant === "free") {
-		actions.push({
-			command: "cordova",
-			args: ["plugin", "add", "src/plugins/admob", "--nosave"],
-			env: PLUGIN_COMMAND_ENV,
-		});
-	}
-
 	return actions;
 
 	/**
@@ -214,7 +200,6 @@ function assertPluginState({ variant, paths, fsImpl }) {
 		config,
 		fsImpl,
 	});
-	const expectedAdmobInstalled = variant === "free";
 
 	if (Object.values(legacyConsentState).some(Boolean)) {
 		throw new Error("Failed to remove the legacy Cordova consent plugin.");
@@ -228,12 +213,8 @@ function assertPluginState({ variant, paths, fsImpl }) {
 			"AdMob must not remain persisted in Cordova project metadata.",
 		);
 	}
-	if (admobState.installed !== expectedAdmobInstalled) {
-		throw new Error(
-			expectedAdmobInstalled
-				? "Failed to install the vendored AdMob plugin."
-				: "Failed to remove the AdMob plugin from the paid variant.",
-		);
+	if (admobState.installed) {
+		throw new Error("Failed to remove the AdMob plugin.");
 	}
 }
 

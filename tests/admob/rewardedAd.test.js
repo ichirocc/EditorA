@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("lib/config", () => ({ default: mocks.config }));
 vi.mock("lib/startAd", () => ({
 	default: mocks.start,
+	ADS_ENABLED: true,
 	adUnitIdRewarded: "test-unit",
 	get initialized() {
 		return mocks.ready;

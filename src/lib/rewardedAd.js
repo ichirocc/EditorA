@@ -1,5 +1,6 @@
 import config from "./config";
 import startAd, {
+	ADS_ENABLED,
 	adUnitIdRewarded,
 	getPrivacyState,
 	initialized,
@@ -11,7 +12,8 @@ let nextId = 0;
 
 export function isRewardedAdSupported() {
 	return Boolean(
-		!config.HAS_PRO &&
+		ADS_ENABLED &&
+			!config.HAS_PRO &&
 			typeof admob !== "undefined" &&
 			admob.RewardedAd &&
 			window.ANDROID_SDK_INT >= 29 &&
@@ -28,6 +30,7 @@ export default function showRewardedAd({
 	serverSideVerification,
 	signal,
 } = {}) {
+	if (!ADS_ENABLED) return Promise.resolve(false);
 	if (signal?.aborted) return Promise.resolve(false);
 	if (active || !isRewardedAdSupported()) {
 		return Promise.reject(new Error(strings["rewarded ad unavailable"]));

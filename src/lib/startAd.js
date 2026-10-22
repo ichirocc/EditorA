@@ -13,7 +13,8 @@ export { BANNER_SUPPRESSION_REASON };
 export let adUnitIdBanner = "ca-app-pub-5911839694379275/9157899592"; // Production
 export let adUnitIdInterstitial = "ca-app-pub-5911839694379275/9570937608"; // Production
 export let adUnitIdRewarded = "ca-app-pub-5911839694379275/1633667633"; // Production
-export const ADS_ENABLED = false; // Security/privacy build: ads disabled.\nexport let initialized = false;
+export const ADS_ENABLED = false; // Security/privacy build: ads disabled.
+export let initialized = false;
 
 /** @type {import("plugins/admob/src/www").BannerAd} */
 export let bannerAd = null;
@@ -71,6 +72,7 @@ export async function showPrivacyOptions() {
 
 function canUseAdmob() {
 	return (
+		ADS_ENABLED &&
 		!config.HAS_PRO &&
 		typeof admob !== "undefined" &&
 		window.ANDROID_SDK_INT >= 29
@@ -88,7 +90,7 @@ function getConsentCoordinator() {
 }
 
 async function initializeAds() {
-	if (initialized) return;
+	if (!ADS_ENABLED || initialized) return;
 
 	if (BuildInfo.buildType === "debug") {
 		console.info("!!! Using test ads");
