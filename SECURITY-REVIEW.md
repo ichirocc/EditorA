@@ -10,6 +10,8 @@ Scope: source-level static review of the supplied Acode source archive. This is 
 5. Localhost and IPv4 loopback HTTP exceptions are retained for local preview/development workflows.
 6. The AdMob Cordova plugin is no longer installed for any build variant (`utils/config.js`). Free builds remove it like paid builds and no longer require `src/plugins/admob/www/admob.js`; the build fails if the plugin is still present after configuration.
 7. `npm run check:ads-disabled` (`utils/scripts/checkOrdinaryAdsDisabled.js`) statically verifies the gates above and that the build configuration does not re-add the AdMob plugin. `tests/admob/adsDisabledPolicy.test.js` verifies at runtime that no rewarded ad is constructed while ads are disabled.
+8. The `codemirror-lsp-client` git submodule (source of `@codemirror/lsp-client`) is registered so the app builds from a fresh `git clone --recurse-submodules`.
+9. Runtime dependencies `dompurify` (3.4.14 → 3.4.17, critical advisories) and `markdown-it` (14.3.0 → 14.3.3, high-severity DoS advisories) were updated. All DOMPurify call sites use plain `sanitize()` without `IN_PLACE`, hooks or `SAFE_FOR_TEMPLATES`, so the advisories were not believed exploitable here, but the update removes them.
 
 ## Findings and risk notes
 - `config.xml` previously enabled `android:usesCleartextTraffic="true"`. This was a high-priority hardening target.
@@ -33,6 +35,6 @@ Scope: source-level static review of the supplied Acode source archive. This is 
 ## Not yet performed
 - APK reverse engineering / final merged manifest inspection.
 - Runtime packet capture and payload review.
-- Full dependency CVE scan.
+- Full dependency CVE remediation. `npm audit` still reports 39 advisories (0 critical, 30 high), all in build-time tooling (Cordova CLI, `@xmldom/xmldom`, `undici`, `vite`, `mocha`, `jshint` and their transitive dependencies) rather than code shipped in the APK. Several fixes need major-version upgrades of the Cordova toolchain.
 - Android 17 device build and UI/performance regression tests.
 - Comprehensive plugin-by-plugin audit.
