@@ -106,6 +106,8 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --no-audit --no-fund
+          # Scripts run outside npm (storage_manager.mjs) call `cordova` directly.
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
           npm run setup
 
       - name: Tests and ads-disabled check
