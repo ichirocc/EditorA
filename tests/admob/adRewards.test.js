@@ -13,7 +13,10 @@ vi.mock("lib/rewardedAd", () => ({
 	isRewardedAdSupported: () => true,
 	isWatchingRewardedAd: () => false,
 }));
-vi.mock("lib/startAd", () => ({ setBannerSuppressed: mocks.suppress }));
+vi.mock("lib/startAd", () => ({
+	ADS_ENABLED: true,
+	setBannerSuppressed: mocks.suppress,
+}));
 vi.mock("lib/secureAdRewardState", () => ({
 	default: { getStatus: mocks.getStatus, redeem: mocks.redeem },
 }));

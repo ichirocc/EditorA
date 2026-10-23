@@ -12,6 +12,9 @@ Scope: source-level static review of the supplied Acode source archive. This is 
 7. `npm run check:ads-disabled` (`utils/scripts/checkOrdinaryAdsDisabled.js`) statically verifies the gates above and that the build configuration does not re-add the AdMob plugin. `tests/admob/adsDisabledPolicy.test.js` verifies at runtime that no rewarded ad is constructed while ads are disabled.
 8. The `codemirror-lsp-client` git submodule (source of `@codemirror/lsp-client`) is registered so the app builds from a fresh `git clone --recurse-submodules`.
 9. Runtime dependencies `dompurify` (3.4.14 → 3.4.17, critical advisories) and `markdown-it` (14.3.0 → 14.3.3, high-severity DoS advisories) were updated. All DOMPurify call sites use plain `sanitize()` without `IN_PLACE`, hooks or `SAFE_FOR_TEMPLATES`, so the advisories were not believed exploitable here, but the update removes them.
+10. `adRewards.canShowAds()` returns false while ads are disabled, and the "earn ad-free time" settings entry is hidden. Previously a free-variant build asked for a rewarded ad before changing the app icon, the ad never ran, and the icon could not be changed.
+11. `utils/scripts/build.sh` stops at the first failing step (`set -e`, no `eval`), so a failed `utils/config.js` run (including the AdMob removal check) no longer continues into rspack and `cordova build`.
+12. `.github/workflows/android-apk.yml` builds an installable APK on GitHub Actions. It runs the ads-disabled check and the test suite first, then inspects the built APK's manifest and fails if AdMob is referenced or `usesCleartextTraffic` is not false.
 
 ## Findings and risk notes
 - `config.xml` previously enabled `android:usesCleartextTraffic="true"`. This was a high-priority hardening target.

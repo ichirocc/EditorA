@@ -1,4 +1,8 @@
 #!/bin/bash
+# Stop at the first failing step so a failed configuration (for example, the
+# AdMob removal check in utils/config.js) never produces an APK.
+set -e
+
 # Default values
 app="paid"
 mode="d"
@@ -84,24 +88,13 @@ else
     echo "Building APK file..."
 fi
 
-RED=''
-NC=''
-
-script1="node ./utils/config.js $mode $app"
-script2="rspack --mode $webpackmode"
-# script3="node ./utils/loadStyles.js"
-
 echo "type : $packageType"
 
-script4="cordova build android $cordovamode -- --packageType=$packageType"
+echo "node ./utils/config.js $mode $app"
+node ./utils/config.js "$mode" "$app"
 
-eval "
-echo \"${RED}$script1${NC}\";
-$script1;
-echo \"${RED}$script2${NC}\";
-$script2&&
-# echo \"${RED}$script3${NC}\";
-# $script3;
-echo \"${RED}$script4${NC}\";
-$script4;
-"
+echo "rspack --mode $webpackmode"
+rspack --mode "$webpackmode"
+
+echo "cordova build android $cordovamode -- --packageType=$packageType"
+cordova build android $cordovamode -- --packageType="$packageType"

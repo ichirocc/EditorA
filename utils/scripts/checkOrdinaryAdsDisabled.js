@@ -38,6 +38,16 @@ const REQUIRED_GUARDS = [
 		],
 	},
 	{
+		file: "src/lib/adRewards.js",
+		patterns: [
+			{
+				pattern: /canShowAds\(\) \{\s*if \(!ADS_ENABLED\) return false;/,
+				message:
+					"adRewards.canShowAds() must return false when ADS_ENABLED is false.",
+			},
+		],
+	},
+	{
 		file: "src/lib/rewardedAd.js",
 		patterns: [
 			{

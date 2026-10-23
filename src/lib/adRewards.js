@@ -9,7 +9,7 @@ import showRewardedAd, {
 	isWatchingRewardedAd,
 } from "./rewardedAd";
 import secureAdRewardState from "./secureAdRewardState";
-import { setBannerSuppressed } from "./startAd";
+import { ADS_ENABLED, setBannerSuppressed } from "./startAd";
 
 const ONE_HOUR = 60 * 60 * 1000;
 
@@ -225,6 +225,7 @@ export default {
 		return isRewardPassActive(state);
 	},
 	canShowAds() {
+		if (!ADS_ENABLED) return false;
 		return Boolean(!config.HAS_PRO && !this.isAdFreeActive());
 	},
 	isRewardedSupported() {

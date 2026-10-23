@@ -1,0 +1,180 @@
+# Builds an installable APK of this ads-disabled fork.
+#
+# Signing (recommended): set these repository secrets so every build is signed
+# with the same key and can be installed over the previous one.
+#   ANDROID_KEYSTORE_BASE64   base64 of the .jks/.keystore file
+#   ANDROID_KEYSTORE_PASSWORD keystore password
+#   ANDROID_KEY_ALIAS         key alias
+#   ANDROID_KEY_PASSWORD      key password
+# Without them a debug APK is built. It is signed with a throwaway debug key
+# that changes on every run, so each new build must replace an uninstalled app.
+
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Also publish the APK as a GitHub pre-release
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Select signing mode
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+            node -e '
+              const fs = require("node:fs");
+              const release = {
+                keystore: process.argv[1],
+                storePassword: process.env.KEYSTORE_PASSWORD,
+                alias: process.env.KEY_ALIAS,
+                password: process.env.KEY_PASSWORD,
+                packageType: "apk",
+              };
+              fs.writeFileSync("build.json", JSON.stringify({ android: { release } }));
+            ' "$KEYSTORE_PATH"
+            echo "mode=p" >> "$GITHUB_OUTPUT"
+            echo "apk=platforms/android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Unsigned build::Signing secrets are not set. Building a debug APK with a throwaway key; uninstall the previous build before installing it."
+            echo "mode=d" >> "$GITHUB_OUTPUT"
+            echo "apk=platforms/android/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute metadata
+        id: meta
+        run: |
+          BASE_VERSION=$(grep -oP '<widget[^>]*\sversion="\K[0-9.]+' config.xml)
+          VERSION="$BASE_VERSION-noads.${GITHUB_SHA::7}"
+          sed -i "0,/version=\"$BASE_VERSION\"/s//version=\"$VERSION\"/" config.xml
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=acode-noads-$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm run setup
+
+      - name: Tests and ads-disabled check
+        run: |
+          npm run check:ads-disabled
+          npm test
+
+      - name: Build APK
+        run: |
+          node utils/storage_manager.mjs y
+          npm run build paid ${{ steps.signing.outputs.mode }} apk
+          mkdir -p dist
+          cp "${{ steps.signing.outputs.apk }}" "dist/${{ steps.meta.outputs.artifact_name }}.apk"
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f build.json "$RUNNER_TEMP/release.keystore"
+
+      - name: Verify APK
+        run: |
+          APK="dist/${{ steps.meta.outputs.artifact_name }}.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$BUILD_TOOLS/aapt2" dump xmltree --file AndroidManifest.xml "$APK" > manifest.txt
+          if grep -qiE 'com\.google\.android\.gms\.ads|admob' manifest.txt; then
+            echo "::error title=AdMob found::The APK manifest still references AdMob."
+            grep -iE 'com\.google\.android\.gms\.ads|admob' manifest.txt
+            exit 1
+          fi
+          if ! grep -qE 'usesCleartextTraffic.*=false' manifest.txt; then
+            echo "::error title=Cleartext traffic::usesCleartextTraffic is not false in the APK manifest."
+            exit 1
+          fi
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+          {
+            echo "## APK"
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            echo "| Version | ${{ steps.meta.outputs.version }} |"
+            echo "| Signing | ${{ steps.signing.outputs.mode == 'p' && 'release key' || 'debug (throwaway key)' }} |"
+            echo "| SHA-256 | $(sha256sum "$APK" | cut -d' ' -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: dist/${{ steps.meta.outputs.artifact_name }}.apk
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" ./*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Acode (ads disabled) $VERSION" \
+            --notes "Ads-disabled build from $GITHUB_SHA."
