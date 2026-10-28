@@ -21,7 +21,9 @@ create, rename or delete files and folders), tabs, open/save/save as through
 the file picker, line numbers, syntax colouring
 (JavaScript/TypeScript, JSON, CSS, Python, Kotlin/Java, C-family, shell/config,
 SQL, HTML/XML, Markdown), undo/redo that treats one IME conversion as one step,
-find and replace (case, whole word, regex), auto-indent, a row of code keys
+find and replace (case, whole word, regex), go to line, LF/CRLF switching,
+Markdown and HTML preview (sandboxed WebView: no network, no file access,
+JavaScript off unless enabled for HTML), auto-indent, a row of code keys
 above the keyboard, hardware-keyboard shortcuts (Ctrl+S/Z/Y/F/O/N/W), and
 restore of open tabs, including unsaved text, after the app is closed.
 
@@ -37,7 +39,7 @@ stops the save and reports its line and column. Files are limited to 2 MB.
 
 | Path | Contents |
 | --- | --- |
-| `core/` | Platform-independent logic: lexer, undo history, search, file decoding, folder tree state. A separate Gradle build with JVM unit tests. |
+| `core/` | Platform-independent logic: lexer, undo history, search, file decoding, folder tree state, Markdown to HTML. A separate Gradle build with JVM unit tests. |
 | `app/` | The Android app (activity, editor view, search bar, session storage). |
 
 ## Building

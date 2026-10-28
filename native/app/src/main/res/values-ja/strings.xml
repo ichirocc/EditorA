@@ -58,4 +58,9 @@
     <string name="delete_confirm">%1$s を削除しますか？元に戻せません。</string>
     <string name="name_hint">名前</string>
     <string name="operation_failed">失敗しました: %1$s</string>
+
+    <string name="menu_preview">プレビュー</string>
+    <string name="menu_goto_line">行へ移動</string>
+    <string name="goto_line_hint">行番号（1〜%1$d）</string>
+    <string name="menu_line_ending">改行コード</string>
 </resources>

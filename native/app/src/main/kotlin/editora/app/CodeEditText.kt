@@ -230,6 +230,22 @@ class CodeEditText(context: Context) : EditText(context) {
 		return (before + 1) to (offset - lineStart + 1)
 	}
 
+	/** Number of logical lines. */
+	val logicalLineCount: Int
+		get() {
+			ensureNewlineIndex()
+			return newlineCount + 1
+		}
+
+	/** Moves the cursor to the start of 1-based [line], clamped to the document. */
+	fun goToLine(line: Int) {
+		ensureNewlineIndex()
+		val target = line.coerceIn(1, newlineCount + 1)
+		val offset = if (target == 1) 0 else newlineOffsets[target - 2] + 1
+		requestFocus()
+		setSelection(offset.coerceAtMost(length()))
+	}
+
 	/** Called by the hosting [ScrollView] when the visible area changes. */
 	fun onViewportChanged() {
 		invalidate()

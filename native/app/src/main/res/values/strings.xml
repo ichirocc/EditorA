@@ -61,4 +61,10 @@
     <string name="delete_confirm">Delete %1$s? This cannot be undone.</string>
     <string name="name_hint">Name</string>
     <string name="operation_failed">Failed: %1$s</string>
+
+    <string name="menu_preview">Preview</string>
+    <string name="preview_javascript" translatable="false">JavaScript</string>
+    <string name="menu_goto_line">Go to line</string>
+    <string name="goto_line_hint">Line number (1–%1$d)</string>
+    <string name="menu_line_ending">Line endings</string>
 </resources>

@@ -35,6 +35,7 @@ import android.window.OnBackInvokedDispatcher
 import editora.core.DecodeResult
 import editora.core.EncodeResult
 import editora.core.Languages
+import editora.core.LineEnding
 import editora.core.TextEncoding
 import editora.core.TextFile
 import editora.core.TextFiles
@@ -56,6 +57,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	private lateinit var statusView: TextView
 	private lateinit var folderPanel: FolderPanel
 	private lateinit var scrim: View
+	private lateinit var previewPanel: PreviewPanel
 	private var panelOpen = false
 
 	private val mainHandler = Handler(Looper.getMainLooper())
@@ -113,6 +115,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	override fun onDestroy() {
 		if (Workspace.onDocumentLoaded == ::onDocumentLoaded) Workspace.onDocumentLoaded = null
+		previewPanel.hide()
 		editor.release()
 		io.shutdown()
 		super.onDestroy()
@@ -184,6 +187,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		}
 		val panelWidth = minOf(dp(320), (resources.displayMetrics.widthPixels * 0.85f).toInt())
 		root.addView(folderPanel, FrameLayout.LayoutParams(panelWidth, match, Gravity.START))
+
+		previewPanel = PreviewPanel(this) { closePreview() }
+		root.addView(previewPanel, FrameLayout.LayoutParams(match, match))
 		restoreFolder()
 
 		// Android 15+ always draws edge to edge, so pad for the system bars and
@@ -300,6 +306,65 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			.withEndAction { if (!panelOpen) folderPanel.visibility = View.GONE }
 			.start()
 		updateBackCallback()
+	}
+
+	private fun openPreview() {
+		val doc = current ?: return
+		val markdown = doc.language == Languages.MARKDOWN
+		if (!markdown && doc.language != Languages.MARKUP) return
+		syncCurrent()
+		closePanel()
+		currentFocus?.let { focused ->
+			(getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+				.hideSoftInputFromWindow(focused.windowToken, 0)
+		}
+		previewPanel.show(doc.name, doc.text, markdown)
+		updateBackCallback()
+	}
+
+	private fun closePreview() {
+		if (!previewPanel.isShowing) return
+		previewPanel.hide()
+		updateBackCallback()
+	}
+
+	private fun promptGoToLine() {
+		val lines = editor.logicalLineCount
+		val input = android.widget.EditText(this).apply {
+			inputType = android.text.InputType.TYPE_CLASS_NUMBER
+			isSingleLine = true
+			hint = getString(R.string.goto_line_hint, lines)
+		}
+		val container = LinearLayout(this).apply {
+			setPadding(dp(20), dp(8), dp(20), 0)
+			addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+		}
+		val dialog = AlertDialog.Builder(this)
+			.setTitle(R.string.menu_goto_line)
+			.setView(container)
+			.setPositiveButton(android.R.string.ok) { _, _ ->
+				input.text.toString().toIntOrNull()?.let { line ->
+					editor.goToLine(line)
+					mainHandler.post { ensureCursorVisible() }
+				}
+			}
+			.setNegativeButton(R.string.action_cancel, null)
+			.create()
+		dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+		dialog.show()
+		input.requestFocus()
+	}
+
+	private fun setLineEnding(lineEnding: LineEnding) {
+		val doc = current ?: return
+		if (doc.lineEnding == lineEnding) return
+		doc.lineEnding = lineEnding
+		if (!doc.dirty) {
+			doc.dirty = true
+			renderTabs()
+		}
+		updateStatus()
+		invalidateOptionsMenu()
 	}
 
 	private fun quickKeys(): View {
@@ -782,6 +847,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
 		menu.add(0, ID_OPEN, 4, R.string.menu_open).setIcon(R.drawable.ic_open)
 			.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+		menu.add(0, ID_PREVIEW, 4, R.string.menu_preview)
+		menu.add(0, ID_GOTO_LINE, 4, R.string.menu_goto_line)
 		menu.add(0, ID_NEW, 5, R.string.menu_new)
 		menu.add(0, ID_OPEN_FOLDER, 5, R.string.menu_open_folder)
 		menu.add(0, ID_SAVE_AS, 6, R.string.menu_save_as)
@@ -796,6 +863,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			if (encoding.isAvailable) encodings.add(GROUP_ENCODING, ID_ENCODING_BASE + index, index, encoding.displayName)
 		}
 		encodings.setGroupCheckable(GROUP_ENCODING, true, true)
+		val lineEndings = menu.addSubMenu(0, ID_LINE_ENDING, 8, R.string.menu_line_ending)
+		for (lineEnding in LineEnding.entries) {
+			lineEndings.add(GROUP_LINE_ENDING, ID_LINE_ENDING_BASE + lineEnding.ordinal, lineEnding.ordinal, lineEnding.name)
+		}
+		lineEndings.setGroupCheckable(GROUP_LINE_ENDING, true, true)
 		menu.add(0, ID_FONT_LARGER, 9, R.string.menu_font_larger)
 		menu.add(0, ID_FONT_SMALLER, 10, R.string.menu_font_smaller)
 		menu.add(0, ID_SUGGESTIONS, 11, R.string.menu_suggestions).isCheckable = true
@@ -804,6 +876,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	override fun onPrepareOptionsMenu(menu: Menu): Boolean {
 		menu.findItem(ID_ENCODING_BASE + (current?.encoding ?: TextEncoding.UTF_8).ordinal)?.isChecked = true
+		menu.findItem(ID_LINE_ENDING_BASE + (current?.lineEnding ?: LineEnding.LF).ordinal)?.isChecked = true
+		val language = current?.language
+		menu.findItem(ID_PREVIEW)?.isVisible = language == Languages.MARKDOWN || language == Languages.MARKUP
 		val languageIndex = Languages.ALL.indexOf(current?.language ?: Languages.PLAIN)
 		menu.findItem(ID_LANGUAGE_BASE + languageIndex)?.isChecked = true
 		menu.findItem(ID_SUGGESTIONS)?.isChecked = prefs.getBoolean(KEY_SUGGESTIONS, false)
@@ -812,6 +887,10 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	override fun onOptionsItemSelected(item: MenuItem): Boolean {
 		val id = item.itemId
+		if (id in ID_LINE_ENDING_BASE until ID_LINE_ENDING_BASE + LineEnding.entries.size) {
+			setLineEnding(LineEnding.entries[id - ID_LINE_ENDING_BASE])
+			return true
+		}
 		if (id in ID_ENCODING_BASE until ID_ENCODING_BASE + TextEncoding.entries.size) {
 			chooseEncoding(TextEncoding.entries[id - ID_ENCODING_BASE])
 			return true
@@ -827,6 +906,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			ID_FIND -> toggleSearch()
 			ID_OPEN -> openPicker()
 			ID_NEW -> newDocument()
+			ID_PREVIEW -> openPreview()
+			ID_GOTO_LINE -> promptGoToLine()
 			ID_OPEN_FOLDER -> folderHost.onPickFolder()
 			ID_SAVE_AS -> current?.let { syncCurrent(); saveAs(it) }
 			ID_CLOSE -> current?.let(::closeDocument)
@@ -851,6 +932,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			KeyEvent.KEYCODE_F -> toggleSearch()
 			KeyEvent.KEYCODE_O -> openPicker()
 			KeyEvent.KEYCODE_N -> newDocument()
+			KeyEvent.KEYCODE_G -> promptGoToLine()
+			KeyEvent.KEYCODE_P -> openPreview()
 			KeyEvent.KEYCODE_W -> current?.let(::closeDocument)
 			else -> return false
 		}
@@ -971,6 +1054,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	/** Closes the topmost transient UI. Returns false when there was none. */
 	private fun handleBack(): Boolean {
 		when {
+			previewPanel.isShowing -> closePreview()
 			panelOpen -> closePanel()
 			searchBar.isShowing -> searchBar.hide()
 			else -> return false
@@ -981,7 +1065,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	private fun updateBackCallback() {
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
 		val dispatcher = onBackInvokedDispatcher
-		val needed = panelOpen || searchBar.isShowing
+		val needed = previewPanel.isShowing || panelOpen || searchBar.isShowing
 		if (needed && backCallback == null) {
 			val callback = OnBackInvokedCallback { handleBack() }
 			dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
@@ -1045,6 +1129,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val ID_SUGGESTIONS = 12
 		const val ID_OPEN_FOLDER = 13
 		const val ID_ENCODING = 14
+		const val ID_PREVIEW = 15
+		const val ID_GOTO_LINE = 16
+		const val ID_LINE_ENDING = 17
+		const val GROUP_LINE_ENDING = 102
+		const val ID_LINE_ENDING_BASE = 3000
 		const val GROUP_ENCODING = 101
 		const val ID_ENCODING_BASE = 2000
 		const val GROUP_LANGUAGE = 100
