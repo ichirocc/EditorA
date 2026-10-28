@@ -1,5 +1,5 @@
-import AssistantSession from "lib/aiAssistant/session";
 import { describe, expect, it, vi } from "vitest";
+import AssistantSession from "../core/session.js";
 
 function fakeGitHub() {
 	return {

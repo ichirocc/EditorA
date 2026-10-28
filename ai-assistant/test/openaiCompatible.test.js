@@ -1,10 +1,10 @@
+import { describe, expect, it, vi } from "vitest";
 import {
 	createOpenAICompatibleAdapter,
 	OPENAI_TOOLS,
 	ProviderError,
-} from "lib/aiAssistant/openaiCompatible";
-import { ToolInputError } from "lib/aiAssistant/tools";
-import { describe, expect, it, vi } from "vitest";
+} from "../core/openaiCompatible.js";
+import { ToolInputError } from "../core/tools.js";
 
 /**
  * A streamed response whose bytes arrive in awkward pieces, to exercise the

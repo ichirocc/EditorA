@@ -1,12 +1,12 @@
-import ChangeSet from "./changeSet";
-import { hasConflictMarkers, merge3 } from "./merge3";
-import { evaluateMergeReadiness } from "./mergeGate";
+import ChangeSet from "./changeSet.js";
+import { hasConflictMarkers, merge3 } from "./merge3.js";
+import { evaluateMergeReadiness } from "./mergeGate.js";
 import {
 	buildCiFailureReport,
 	buildStateNote,
 	buildSystemPrompt,
-} from "./prompt";
-import { createToolExecutor } from "./tools";
+} from "./prompt.js";
+import { createToolExecutor } from "./tools.js";
 
 // GitHub lists at most 300 changed files in a comparison.
 const COMPARE_FILE_LIMIT = 300;
@@ -54,7 +54,7 @@ async function forEachLimited(items, limit, fn) {
  * @typedef {object} ModelAdapter
  * @property {string} model can be changed between turns
  * @property {(texts:string[]) => any} userMessage
- * @property {(options:{system:string, messages:any[], executeTool:(name:string, input:any) => Promise<string>, onEvent?:(event:import("./agent").AgentEvent) => void, signal?:AbortSignal}) => Promise<void>} runTurn
+ * @property {(options:{system:string, messages:any[], executeTool:(name:string, input:any) => Promise<string>, onEvent?:(event:import("./agent.js").AgentEvent) => void, signal?:AbortSignal}) => Promise<void>} runTurn
  *   streams one turn, appending the assistant's messages and tool results
  */
 
@@ -68,7 +68,7 @@ async function forEachLimited(items, limit, fn) {
  * re-checks the merge gate right before merging the exact head it checked.
  */
 export default class AssistantSession {
-	/**@type {import("./github").GitHubClient} */
+	/**@type {import("./github.js").GitHubClient} */
 	#github;
 	/**@type {() => Date} */
 	#now;
@@ -88,7 +88,7 @@ export default class AssistantSession {
 	workBranch = null;
 	/**@type {any|null} pull request from the GitHub API */
 	pr = null;
-	/**@type {import("./mergeGate").MergeReadiness|null} */
+	/**@type {import("./mergeGate.js").MergeReadiness|null} */
 	readiness = null;
 	/**@type {any[]} conversation sent to Claude */
 	messages = [];
@@ -105,21 +105,31 @@ export default class AssistantSession {
 
 	/**
 	 * @param {object} options
-	 * @param {import("./github").GitHubClient} options.github
+	 * @param {import("./github.js").GitHubClient} options.github
 	 * @param {ModelAdapter} options.ai
 	 * @param {string} options.owner
 	 * @param {string} options.repo
 	 * @param {string} options.baseBranch
+	 * @param {string} [options.host] the app the assistant runs in, for the
+	 *   system prompt
 	 * @param {() => Date} [options.now]
 	 */
-	constructor({ github, ai, owner, repo, baseBranch, now = () => new Date() }) {
+	constructor({
+		github,
+		ai,
+		owner,
+		repo,
+		baseBranch,
+		host,
+		now = () => new Date(),
+	}) {
 		this.#github = github;
 		this.#now = now;
 		this.ai = ai;
 		this.owner = owner;
 		this.repo = repo;
 		this.baseBranch = baseBranch;
-		this.system = buildSystemPrompt({ owner, repo, baseBranch });
+		this.system = buildSystemPrompt({ owner, repo, baseBranch, host });
 		this.#executeTool = createToolExecutor({
 			changeSet: this.changeSet,
 			listBranchFiles: () => this.#listFiles(),
@@ -154,7 +164,7 @@ export default class AssistantSession {
 	 * removed again so it can be resent without duplicating it.
 	 * @param {string} text
 	 * @param {object} [options]
-	 * @param {(event:import("./agent").AgentEvent) => void} [options.onEvent]
+	 * @param {(event:import("./agent.js").AgentEvent) => void} [options.onEvent]
 	 * @param {AbortSignal} [options.signal]
 	 */
 	async send(text, { onEvent, signal } = {}) {
@@ -433,7 +443,7 @@ export default class AssistantSession {
 
 	/**
 	 * Reloads the pull request and its CI results and re-evaluates the gate.
-	 * @returns {Promise<import("./mergeGate").MergeReadiness>}
+	 * @returns {Promise<import("./mergeGate.js").MergeReadiness>}
 	 */
 	async refreshStatus() {
 		if (!this.pr) throw new Error("There is no pull request.");
@@ -465,7 +475,7 @@ export default class AssistantSession {
 	/**
 	 * Squash-merges the pull request after re-checking the gate. GitHub
 	 * refuses the merge if the head moved after this check.
-	 * @returns {Promise<import("./mergeGate").MergeReadiness>} the readiness
+	 * @returns {Promise<import("./mergeGate.js").MergeReadiness>} the readiness
 	 *   that allowed the merge
 	 */
 	async merge() {

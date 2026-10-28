@@ -1,4 +1,4 @@
-import { TOOLS, ToolInputError } from "./tools";
+import { TOOLS, ToolInputError } from "./tools.js";
 
 /**
  * Agent loop for providers with an OpenAI-compatible Chat Completions API
@@ -94,7 +94,7 @@ async function* readEvents(body) {
  * Adds one streamed chunk, or a whole non-streamed response, to a reply.
  * @param {Reply} reply
  * @param {any} chunk
- * @param {(event:import("./agent").AgentEvent) => void} onEvent
+ * @param {(event:import("./agent.js").AgentEvent) => void} onEvent
  */
 function addChunk(reply, chunk, onEvent) {
 	if (chunk.error) {
@@ -133,7 +133,7 @@ function addChunk(reply, chunk, onEvent) {
  * @param {typeof fetch} [options.fetch]
  * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.nativeGet]
  * @param {(url:string, headers:Record<string,string>, body:string, signal?:AbortSignal) => Promise<string>} [options.nativePost]
- * @returns {import("./session").ModelAdapter & {listModels: () => Promise<string[]>}}
+ * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
 export function createOpenAICompatibleAdapter({
 	baseUrl,
@@ -216,7 +216,7 @@ export function createOpenAICompatibleAdapter({
 		 * @param {string} options.system
 		 * @param {any[]} options.messages
 		 * @param {(name:string, input:any) => Promise<string>} options.executeTool
-		 * @param {(event:import("./agent").AgentEvent) => void} [options.onEvent]
+		 * @param {(event:import("./agent.js").AgentEvent) => void} [options.onEvent]
 		 * @param {AbortSignal} [options.signal]
 		 */
 		async runTurn({

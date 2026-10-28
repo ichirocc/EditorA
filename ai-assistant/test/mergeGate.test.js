@@ -1,5 +1,5 @@
-import { evaluateMergeReadiness } from "lib/aiAssistant/mergeGate";
 import { describe, expect, it } from "vitest";
+import { evaluateMergeReadiness } from "../core/mergeGate.js";
 
 const openPr = {
 	state: "open",

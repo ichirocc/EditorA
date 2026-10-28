@@ -1,12 +1,22 @@
+/** Where the assistant runs, unless the host app says otherwise. */
+export const DEFAULT_HOST =
+	"EditorA AI Assistant, a chat app the user opens in a browser, often on a phone";
+
 /**
  * System prompt for an assistant session. It only depends on values fixed
  * for the whole session, so it stays byte-identical and cacheable; changing
  * state reaches the model through <app_state> notes in user messages.
- * @param {{owner:string, repo:string, baseBranch:string}} target
+ * @param {{owner:string, repo:string, baseBranch:string, host?:string}} target
+ *   `host` describes the app the assistant runs in
  * @returns {string}
  */
-export function buildSystemPrompt({ owner, repo, baseBranch }) {
-	return `You are a coding assistant inside EditorA, a code editor running on the user's Android phone. You work on the GitHub repository ${owner}/${repo}, starting from its "${baseBranch}" branch.
+export function buildSystemPrompt({
+	owner,
+	repo,
+	baseBranch,
+	host = DEFAULT_HOST,
+}) {
+	return `You are a coding assistant inside ${host}. You work on the GitHub repository ${owner}/${repo}, starting from its "${baseBranch}" branch.
 
 How this works:
 - You read the repository and stage edits with your tools. Nothing leaves the app until the user reviews the diff and presses Push, which commits your staged edits to a work branch. The user then opens a pull request and merges it into ${baseBranch} from the app. You cannot push, open pull requests or merge; when the user asks for that, tell them which button to use.

@@ -64,8 +64,9 @@ export function tailJobLog(log) {
  * @param {string} options.token fine-grained or classic personal access token
  * @param {typeof fetch} [options.fetch]
  * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.getText]
- *   GET that follows redirects outside the WebView. Job logs redirect to
- *   another host without CORS headers, so `fetch` cannot read them.
+ *   GET that follows redirects to another host. Job logs redirect to a host
+ *   without CORS headers, so `fetch` in a browser cannot read them; in Node
+ *   plain `fetch` works and is the default.
  */
 export function createGitHubClient({
 	token,

@@ -1,5 +1,5 @@
-import { createGitHubClient, GitHubError } from "lib/aiAssistant/github";
 import { describe, expect, it, vi } from "vitest";
+import { createGitHubClient, GitHubError } from "../core/github.js";
 
 /**
  * @param {Record<string, {status?:number, body?:any}>} routes keyed by "METHOD path"

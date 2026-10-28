@@ -25,6 +25,11 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
       - "native/**"
       - ".github/workflows/native-apk.yml"
+      # The standalone assistant's server, UI and tests are not part of the
+      # APK; ai-assistant/core is, so it still triggers a build.
+      - "ai-assistant/server/**"
+      - "ai-assistant/web/**"
+      - "ai-assistant/test/**"
 
 permissions:
   contents: read

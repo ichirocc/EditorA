@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { TOOLS, ToolInputError } from "./tools";
+import { TOOLS, ToolInputError } from "./tools.js";
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
@@ -11,13 +11,14 @@ const MAX_JSON_RETRIES = 2;
 const MAX_ROUNDS = 60;
 
 /**
- * The API key belongs to the user and lives on their device, so calling the
- * API directly from the WebView is the intended setup here.
  * @param {string} apiKey
+ * @param {{browser?:boolean}} [options] `browser` allows calling the API
+ *   from a browser or WebView; the editor does this because the key belongs
+ *   to the user and stays on their device
  * @returns {Anthropic}
  */
-export function createClaudeClient(apiKey) {
-	return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+export function createClaudeClient(apiKey, { browser = false } = {}) {
+	return new Anthropic({ apiKey, dangerouslyAllowBrowser: browser });
 }
 
 /**
@@ -169,11 +170,11 @@ export async function runAgentTurn({
 
 /**
  * Session adapter for Claude.
- * @param {{apiKey:string, model:string}} options
- * @returns {import("./session").ModelAdapter & {listModels: () => Promise<string[]>}}
+ * @param {{apiKey:string, model:string, browser?:boolean}} options
+ * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
-export function createAnthropicAdapter({ apiKey, model }) {
-	const client = createClaudeClient(apiKey);
+export function createAnthropicAdapter({ apiKey, model, browser = false }) {
+	const client = createClaudeClient(apiKey, { browser });
 	return {
 		model,
 		userMessage(texts) {

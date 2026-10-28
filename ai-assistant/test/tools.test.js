@@ -1,12 +1,12 @@
-import ChangeSet from "lib/aiAssistant/changeSet";
+import { beforeEach, describe, expect, it } from "vitest";
+import ChangeSet from "../core/changeSet.js";
 import {
 	createToolExecutor,
 	normalizeRepoPath,
 	TOOLS,
 	ToolInputError,
 	validateToolInput,
-} from "lib/aiAssistant/tools";
-import { beforeEach, describe, expect, it } from "vitest";
+} from "../core/tools.js";
 
 const branchFiles = {
 	"README.md": "# Demo\n",

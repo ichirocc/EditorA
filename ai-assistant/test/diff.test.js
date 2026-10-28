@@ -1,10 +1,5 @@
-import {
-	diffHunks,
-	diffLines,
-	diffStat,
-	splitLines,
-} from "lib/aiAssistant/diff";
 import { describe, expect, it } from "vitest";
+import { diffHunks, diffLines, diffStat, splitLines } from "../core/diff.js";
 
 function render(lines) {
 	return lines.map((line) => {

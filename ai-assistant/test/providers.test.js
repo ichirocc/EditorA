@@ -1,10 +1,10 @@
+import { describe, expect, it } from "vitest";
 import {
 	getProvider,
 	isAllowedBaseUrl,
 	PROVIDERS,
 	secretNameFor,
-} from "lib/aiAssistant/providers";
-import { describe, expect, it } from "vitest";
+} from "../core/providers.js";
 
 describe("AI assistant providers", () => {
 	it("offers Claude, DeepSeek and the other compatible providers", () => {

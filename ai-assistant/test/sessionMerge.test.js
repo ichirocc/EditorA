@@ -1,5 +1,5 @@
-import AssistantSession from "lib/aiAssistant/session";
 import { describe, expect, it, vi } from "vitest";
+import AssistantSession from "../core/session.js";
 
 /**
  * A tiny repository: commit sha → files. The work branch "c1" was cut from

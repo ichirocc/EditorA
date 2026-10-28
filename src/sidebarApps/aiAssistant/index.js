@@ -7,17 +7,18 @@ import multiPrompt from "dialogs/multiPrompt";
 import prompt from "dialogs/prompt";
 import select from "dialogs/select";
 import DOMPurify from "dompurify";
-import { diffHunks, diffStat } from "lib/aiAssistant/diff";
+import { createEditorModelAdapter, EDITOR_HOST } from "lib/aiAssistant/models";
+import secrets from "lib/aiAssistant/secrets";
+import appSettings from "lib/settings";
+import markdownIt from "markdown-it";
+// The assistant's core is the standalone project in ai-assistant/.
+import { diffHunks, diffStat } from "../../../ai-assistant/core/diff.js";
 import {
-	createModelAdapter,
 	getProvider,
 	isAllowedBaseUrl,
 	PROVIDERS,
 	secretNameFor,
-} from "lib/aiAssistant/providers";
-import secrets from "lib/aiAssistant/secrets";
-import appSettings from "lib/settings";
-import markdownIt from "markdown-it";
+} from "../../../ai-assistant/core/providers.js";
 
 const MAX_DIFF_LINES = 400;
 const WATCH_FIRST_DELAY = 15_000;
@@ -33,7 +34,7 @@ const TOOL_ICONS = {
 
 const markdown = markdownIt({ html: false, linkify: true, breaks: true });
 
-/** @type {import("lib/aiAssistant/session").default|null} */
+/** @type {import("../../../ai-assistant/core/session.js").default|null} */
 let session = null;
 let busy = false;
 /** @type {AbortController|null} */
@@ -149,7 +150,7 @@ function config() {
 	};
 }
 
-/** @param {import("lib/aiAssistant/providers").Provider} provider */
+/** @param {import("../../../ai-assistant/core/providers.js").Provider} provider */
 function providerLabel(provider) {
 	return provider.id === "custom"
 		? strings["ai provider custom"]
@@ -292,7 +293,7 @@ async function openModelSettings() {
 /**
  * Lets the user pick one of the provider's current models, or type one.
  * @param {object} options
- * @param {import("lib/aiAssistant/providers").Provider} options.provider
+ * @param {import("../../../ai-assistant/core/providers.js").Provider} options.provider
  * @param {string} options.baseUrl
  * @param {string} options.apiKey
  * @param {string} options.current preselected model
@@ -303,7 +304,7 @@ async function chooseModel({ provider, baseUrl, apiKey, current }) {
 	let models = [];
 	let failure = "";
 	try {
-		const adapter = await createModelAdapter({
+		const adapter = await createEditorModelAdapter({
 			provider,
 			model: current,
 			baseUrl,
@@ -430,7 +431,7 @@ function resetSession() {
 
 /**
  * Creates the session on first use, so the SDK is only loaded when needed.
- * @returns {Promise<import("lib/aiAssistant/session").default|null>}
+ * @returns {Promise<import("../../../ai-assistant/core/session.js").default|null>}
  */
 async function ensureSession() {
 	if (session) return session;
@@ -452,14 +453,15 @@ async function ensureSession() {
 		{ nativeGetText },
 		ai,
 	] = await Promise.all([
-		import("lib/aiAssistant/session"),
-		import("lib/aiAssistant/github"),
+		import("../../../ai-assistant/core/session.js"),
+		import("../../../ai-assistant/core/github.js"),
 		import("lib/aiAssistant/nativeHttp"),
-		createModelAdapter({ provider, model, baseUrl, apiKey }),
+		createEditorModelAdapter({ provider, model, baseUrl, apiKey }),
 	]);
 	const created = new AssistantSession({
 		github: createGitHubClient({ token: githubToken, getText: nativeGetText }),
 		ai,
+		host: EDITOR_HOST,
 		owner,
 		repo,
 		baseBranch,
@@ -837,7 +839,7 @@ function renderActions() {
 }
 
 /**
- * @param {import("lib/aiAssistant/mergeGate").MergeReadiness} readiness
+ * @param {import("../../../ai-assistant/core/mergeGate.js").MergeReadiness} readiness
  * @returns {HTMLElement}
  */
 function renderReadiness(readiness) {
@@ -939,7 +941,7 @@ function renderMerging(conflicts) {
 }
 
 /**
- * @param {import("lib/aiAssistant/mergeGate").MergeReadiness} readiness
+ * @param {import("../../../ai-assistant/core/mergeGate.js").MergeReadiness} readiness
  * @returns {string[]}
  */
 function describeBlockers(readiness) {
@@ -952,7 +954,7 @@ function describeBlockers(readiness) {
 }
 
 /**
- * @param {import("lib/aiAssistant/mergeGate").MergeReadiness} readiness
+ * @param {import("../../../ai-assistant/core/mergeGate.js").MergeReadiness} readiness
  * @returns {string[]}
  */
 function describeWarnings(readiness) {
@@ -1014,7 +1016,7 @@ function watchCi(delay = WATCH_FIRST_DELAY, polls = 0) {
 }
 
 /**
- * @param {import("lib/aiAssistant/mergeGate").MergeReadiness} readiness
+ * @param {import("../../../ai-assistant/core/mergeGate.js").MergeReadiness} readiness
  */
 function announceCiResult(readiness) {
 	const failed = readiness.checks.filter((check) => check.state === "failure");

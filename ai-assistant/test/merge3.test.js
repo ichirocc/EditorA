@@ -1,5 +1,5 @@
-import { hasConflictMarkers, merge3 } from "lib/aiAssistant/merge3";
 import { describe, expect, it } from "vitest";
+import { hasConflictMarkers, merge3 } from "../core/merge3.js";
 
 const lines = (...items) => `${items.join("\n")}\n`;
 const labels = { ours: "ai/edit", theirs: "main" };

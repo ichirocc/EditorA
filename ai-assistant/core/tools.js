@@ -149,7 +149,7 @@ export function validateToolInput(tool, input) {
 
 /**
  * @typedef {object} Workspace
- * @property {import("./changeSet").default} changeSet
+ * @property {import("./changeSet.js").default} changeSet
  * @property {() => Promise<{files:{path:string, mode:string}[], truncated:boolean}>} listBranchFiles
  * @property {(path:string) => Promise<string|null>} readBranchFile
  */

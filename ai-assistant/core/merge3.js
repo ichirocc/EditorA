@@ -1,4 +1,4 @@
-import { diffLines, splitLines } from "./diff";
+import { diffLines, splitLines } from "./diff.js";
 
 /**
  * Line-based three-way merge, used when the base branch is merged into the

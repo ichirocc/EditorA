@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { createAnthropicAdapter, runAgentTurn } from "lib/aiAssistant/agent";
-import { ToolInputError } from "lib/aiAssistant/tools";
 import { describe, expect, it, vi } from "vitest";
+import { createAnthropicAdapter, runAgentTurn } from "../core/agent.js";
+import { ToolInputError } from "../core/tools.js";
 
 /**
  * A stand-in for client.beta.messages.stream that replays scripted replies.

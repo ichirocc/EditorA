@@ -1,5 +1,5 @@
-import ChangeSet from "lib/aiAssistant/changeSet";
 import { describe, expect, it } from "vitest";
+import ChangeSet from "../core/changeSet.js";
 
 describe("AI assistant change set", () => {
 	it("keeps the branch version across repeated edits", () => {

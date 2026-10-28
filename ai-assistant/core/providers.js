@@ -123,20 +123,35 @@ export function isAllowedBaseUrl(url) {
  * @param {string} options.model
  * @param {string} [options.baseUrl] overrides the provider's API root
  * @param {string} options.apiKey
- * @returns {Promise<import("./session").ModelAdapter>}
+ * @param {boolean} [options.browser] running in a browser or WebView, so the
+ *   Anthropic SDK must be allowed to call the API from there
+ * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.nativeGet]
+ * @param {(url:string, headers:Record<string,string>, body:string, signal?:AbortSignal) => Promise<string>} [options.nativePost]
+ *   requests that bypass CORS (the editor's native HTTP plugin); in Node
+ *   they are not needed
+ * @returns {Promise<import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}>}
  */
-export async function createModelAdapter({ provider, model, baseUrl, apiKey }) {
+export async function createModelAdapter({
+	provider,
+	model,
+	baseUrl,
+	apiKey,
+	browser = false,
+	nativeGet = null,
+	nativePost = null,
+}) {
 	if (provider.kind === "anthropic") {
-		const { createAnthropicAdapter } = await import("./agent");
-		return createAnthropicAdapter({ apiKey, model });
+		const { createAnthropicAdapter } = await import("./agent.js");
+		return createAnthropicAdapter({ apiKey, model, browser });
 	}
-	const [{ createOpenAICompatibleAdapter }, { nativeGetText, nativePostText }] =
-		await Promise.all([import("./openaiCompatible"), import("./nativeHttp")]);
+	const { createOpenAICompatibleAdapter } = await import(
+		"./openaiCompatible.js"
+	);
 	return createOpenAICompatibleAdapter({
 		baseUrl: baseUrl || provider.baseUrl,
 		apiKey,
 		model,
-		nativeGet: nativeGetText,
-		nativePost: nativePostText,
+		nativeGet,
+		nativePost,
 	});
 }

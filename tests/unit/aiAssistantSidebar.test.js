@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 
 import tag from "html-tag-js";
-import { runAgentTurn } from "lib/aiAssistant/agent";
-import * as diff from "lib/aiAssistant/diff";
-import * as providers from "lib/aiAssistant/providers";
-import AssistantSession from "lib/aiAssistant/session";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { runAgentTurn } from "../../ai-assistant/core/agent.js";
+import * as diff from "../../ai-assistant/core/diff.js";
+import * as providers from "../../ai-assistant/core/providers.js";
+import AssistantSession from "../../ai-assistant/core/session.js";
 import { loadSourceModule } from "../helpers/loadSourceModule.js";
 
 // The element helper html-tag-js installs in the app. Unlike the app's JSX
@@ -148,7 +148,7 @@ function loadApp({
 			"dialogs/prompt": { __esModule: true, default: mocks.prompt },
 			"dialogs/select": { __esModule: true, default: mocks.select },
 			dompurify: { __esModule: true, default: { sanitize: (html) => html } },
-			"lib/aiAssistant/diff": diff,
+			"../../../ai-assistant/core/diff.js": diff,
 			"lib/aiAssistant/secrets": {
 				__esModule: true,
 				default: {
@@ -160,12 +160,18 @@ function loadApp({
 			},
 			"lib/settings": { __esModule: true, default: appSettings },
 			"markdown-it": { __esModule: true, default: markdown },
-			"lib/aiAssistant/session": {
+			"../../../ai-assistant/core/session.js": {
 				__esModule: true,
 				default: AssistantSession,
 			},
-			"lib/aiAssistant/github": { createGitHubClient: () => github },
-			"lib/aiAssistant/providers": { ...providers, createModelAdapter },
+			"../../../ai-assistant/core/github.js": {
+				createGitHubClient: () => github,
+			},
+			"../../../ai-assistant/core/providers.js": providers,
+			"lib/aiAssistant/models": {
+				createEditorModelAdapter: createModelAdapter,
+				EDITOR_HOST: "the test editor",
+			},
 			"lib/aiAssistant/nativeHttp": { nativeGetText: vi.fn() },
 		},
 		{

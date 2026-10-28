@@ -42,7 +42,7 @@ Acode/
 
 ## • AI assistant (chat → pull request → merge)
 
-The **AI assistant** sidebar app (chat bubble icon) edits a GitHub repository through a chat with an AI model and merges the result only when you say so.
+The **AI assistant** sidebar app (chat bubble icon) edits a GitHub repository through a chat with an AI model and merges the result only when you say so. The same assistant also runs on its own, in a browser, from [`ai-assistant/`](ai-assistant/README.md); its `core/` is shared with the editor.
 
 1. Open the assistant's settings (gear icon).
    - **AI provider and model**: choose Anthropic Claude, DeepSeek, OpenAI, Google Gemini, xAI Grok, Moonshot Kimi, Alibaba Qwen, Z.ai GLM, Mistral, OpenRouter, or any other OpenAI-compatible API (for example a model server running on the phone at `http://localhost`), enter that provider's API key, and pick a model from the provider's current model list.

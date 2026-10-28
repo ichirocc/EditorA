@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="color-scheme" content="light dark" />
+		<title>EditorA AI Assistant</title>
+		<link rel="stylesheet" href="style.css" />
+		<script type="module" src="app.js"></script>
+	</head>
+	<body>
+		<header>
+			<div class="title-row">
+				<h1 id="title">AI assistant</h1>
+				<div class="actions">
+					<button type="button" id="newSession" class="icon" aria-label="New session">＋</button>
+					<button type="button" id="openSettings" class="icon" aria-label="Settings">⚙</button>
+				</div>
+			</div>
+			<div id="subtitle" class="subtitle"></div>
+		</header>
+
+		<main id="messages" aria-live="polite"></main>
+		<section id="changes" class="panel hidden"></section>
+		<section id="workflow" class="panel hidden"></section>
+
+		<form id="composer">
+			<textarea id="input" rows="1"></textarea>
+			<button type="submit" id="send" class="primary">➤</button>
+		</form>
+
+		<dialog id="settingsDialog">
+			<form id="settingsForm" method="dialog">
+				<h2 id="settingsTitle">Settings</h2>
+				<label><span data-t="provider"></span><select id="provider"></select></label>
+				<label id="baseUrlField"><span data-t="baseUrl"></span><input id="baseUrl" type="url" inputmode="url" autocomplete="off" /></label>
+				<label><span data-t="apiKey"></span><input id="apiKey" type="password" autocomplete="off" /></label>
+				<label>
+					<span data-t="model"></span>
+					<span class="row">
+						<input id="model" type="text" list="modelList" autocomplete="off" required />
+						<button type="button" id="loadModels" data-t="loadModels"></button>
+					</span>
+					<datalist id="modelList"></datalist>
+					<small id="modelsStatus"></small>
+				</label>
+				<label><span data-t="owner"></span><input id="owner" type="text" autocomplete="off" autocapitalize="off" required /></label>
+				<label><span data-t="repo"></span><input id="repo" type="text" autocomplete="off" autocapitalize="off" required /></label>
+				<label><span data-t="branch"></span><input id="baseBranch" type="text" autocomplete="off" autocapitalize="off" required /></label>
+				<label><span data-t="githubToken"></span><input id="githubToken" type="password" autocomplete="off" /></label>
+				<p id="settingsError" class="error"></p>
+				<div class="buttons">
+					<button type="button" id="cancelSettings" data-t="cancel"></button>
+					<button type="submit" class="primary" data-t="save"></button>
+				</div>
+			</form>
+		</dialog>
+
+		<dialog id="tokenDialog">
+			<form id="tokenForm" method="dialog">
+				<p data-t="tokenPrompt"></p>
+				<label><span data-t="token"></span><input id="tokenInput" type="password" autocomplete="off" required /></label>
+				<div class="buttons"><button type="submit" class="primary" data-t="ok"></button></div>
+			</form>
+		</dialog>
+	</body>
+</html>
