@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">EditorA</string>
+    <string name="untitled">Untitled</string>
+
+    <string name="menu_open">Open</string>
+    <string name="menu_new">New file</string>
+    <string name="menu_save">Save</string>
+    <string name="menu_save_as">Save as…</string>
+    <string name="menu_undo">Undo</string>
+    <string name="menu_redo">Redo</string>
+    <string name="menu_find">Find and replace</string>
+    <string name="menu_close_tab">Close tab</string>
+    <string name="menu_language">Syntax</string>
+    <string name="menu_font_larger">Larger text</string>
+    <string name="menu_font_smaller">Smaller text</string>
+    <string name="menu_suggestions">Keyboard suggestions</string>
+
+    <string name="saved">Saved %1$s</string>
+    <string name="save_failed">Could not save: %1$s</string>
+    <string name="open_failed">Could not open: %1$s</string>
+    <string name="file_too_large">File is too large (limit %1$d MB)</string>
+    <string name="file_binary">This looks like a binary file</string>
+    <string name="file_not_utf8">Only UTF-8 text files are supported</string>
+    <string name="file_gone">%1$s is no longer available and was closed</string>
+
+    <string name="unsaved_title">Unsaved changes</string>
+    <string name="unsaved_message">Save changes to %1$s?</string>
+    <string name="action_save">Save</string>
+    <string name="action_discard">Discard</string>
+    <string name="action_cancel">Cancel</string>
+
+    <string name="find_hint">Find</string>
+    <string name="replace_hint">Replace with</string>
+    <string name="replace">Replace</string>
+    <string name="replace_all">All</string>
+    <string name="match_case" translatable="false">Aa</string>
+    <string name="whole_word">Word</string>
+    <string name="regex" translatable="false">.*</string>
+    <string name="find_count">%1$d found</string>
+    <string name="replaced_count">Replaced %1$d</string>
+    <string name="invalid_regex">Invalid pattern</string>
+    <string name="no_match">No matches</string>
+    <string name="close">Close</string>
+
+    <string name="status_format">Ln %1$d, Col %2$d · %3$s · %4$s</string>
+</resources>

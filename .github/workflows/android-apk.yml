@@ -23,6 +23,8 @@ on:
     paths-ignore:
       - "**.md"
       - ".github/ISSUE_TEMPLATE/**"
+      - "native/**"
+      - ".github/workflows/native-apk.yml"
 
 permissions:
   contents: read
