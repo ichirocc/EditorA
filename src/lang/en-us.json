@@ -687,7 +687,7 @@
 	"settings-info-app-font-manager": "Install, manage, or remove app fonts.",
 	"settings-info-app-fullscreen": "Hide the system status bar while using Acode.",
 	"settings-info-app-keybindings": "Edit the key bindings file or reset shortcuts.",
-	"settings-info-app-keyboard-mode": "Choose how the software keyboard behaves while editing.",
+	"settings-info-app-keyboard-mode": "Choose how the software keyboard behaves while editing. \"No suggestions aggressive\" treats the editor as a password field, which blocks Japanese and other IME input.",
 	"settings-info-app-language": "Choose the app language and translated labels.",
 	"settings-info-app-open-file-list-position": "Choose where the active files list appears.",
 	"settings-info-app-quick-tools-settings": "Reorder and customize quick tool shortcuts.",

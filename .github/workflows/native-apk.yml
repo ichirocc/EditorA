@@ -1,0 +1,146 @@
+# Builds the native Kotlin editor in native/.
+#
+# Uses the same signing secrets as android-apk.yml (ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD). Without
+# them a debug APK is built, signed with a throwaway key.
+
+name: Native APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Also publish the APK as a GitHub pre-release
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Validates gradle-wrapper.jar against Gradle's published checksums.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Install Android SDK packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Compute metadata
+        id: meta
+        run: |
+          VERSION="0.1.0-${GITHUB_SHA::7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=editora-native-$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Core unit tests
+        run: ./gradlew -p core test --no-daemon
+
+      - name: Build APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          EDITORA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          EDITORA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          EDITORA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EDITORA_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          mkdir -p dist
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$EDITORA_KEYSTORE_PASSWORD" ] && [ -n "$EDITORA_KEY_ALIAS" ] && [ -n "$EDITORA_KEY_PASSWORD" ]; then
+            export EDITORA_KEYSTORE_PATH="$RUNNER_TEMP/editora.keystore"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$EDITORA_KEYSTORE_PATH"
+            ./gradlew :app:assembleRelease --no-daemon
+            rm -f "$EDITORA_KEYSTORE_PATH"
+            cp app/build/outputs/apk/release/app-release.apk "dist/${{ steps.meta.outputs.artifact_name }}.apk"
+            echo "signing=release key" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=Unsigned build::Signing secrets are not set. Building a debug APK with a throwaway key."
+            ./gradlew :app:assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk "dist/${{ steps.meta.outputs.artifact_name }}.apk"
+            echo "signing=debug (throwaway key)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify APK
+        run: |
+          APK="dist/${{ steps.meta.outputs.artifact_name }}.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$BUILD_TOOLS/aapt2" dump permissions "$APK" | tee permissions.txt
+          # The editor needs no permissions at all; fail if any appear.
+          if grep -q "uses-permission" permissions.txt; then
+            echo "::error title=Unexpected permission::The APK requests permissions."
+            exit 1
+          fi
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+          {
+            echo "## Native APK"
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            echo "| Version | ${{ steps.meta.outputs.version }} |"
+            echo "| Signing | $signing |"
+            echo "| Size | $(du -h "$APK" | cut -f1) |"
+            echo "| SHA-256 | $(sha256sum "$APK" | cut -d' ' -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: native/dist/${{ steps.meta.outputs.artifact_name }}.apk
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "native-v$VERSION" ./*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "EditorA native $VERSION" \
+            --notes "Native editor build from $GITHUB_SHA."
+        working-directory: .
