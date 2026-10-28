@@ -25,7 +25,13 @@ find and replace (case, whole word, regex), auto-indent, a row of code keys
 above the keyboard, hardware-keyboard shortcuts (Ctrl+S/Z/Y/F/O/N/W), and
 restore of open tabs, including unsaved text, after the app is closed.
 
-Files must be UTF-8 (a BOM and CRLF line endings are kept) and at most 2 MB.
+Japanese legacy encodings are supported: on open the encoding is detected
+(byte order mark, ISO-2022-JP escapes, strict UTF-8, then Shift_JIS/CP932 versus
+EUC-JP by which decodes cleanly and reads more like Japanese), and files are
+saved back in the same encoding with their BOM and CRLF line endings. The
+Encoding menu reopens a file in another encoding or converts it on save; a
+character the target encoding cannot hold (an emoji in Shift_JIS, for example)
+stops the save and reports its line and column. Files are limited to 2 MB.
 
 ## Layout
 

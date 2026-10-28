@@ -33,7 +33,9 @@ import android.widget.Toolbar
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import editora.core.DecodeResult
+import editora.core.EncodeResult
 import editora.core.Languages
+import editora.core.TextEncoding
 import editora.core.TextFile
 import editora.core.TextFiles
 import java.io.ByteArrayOutputStream
@@ -358,7 +360,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	private fun updateStatus() {
 		val doc = current ?: return
 		val (line, column) = editor.lineAndColumn(editor.selectionStart.coerceAtLeast(0))
-		val format = doc.lineEnding.name + if (doc.hasBom) " BOM" else ""
+		val bom = if (doc.hasBom && !doc.encoding.alwaysHasBom) " BOM" else ""
+		val format = "${doc.encoding.displayName}$bom · ${doc.lineEnding.name}"
 		statusView.text = getString(R.string.status_format, line, column, doc.language.displayName, format)
 	}
 
@@ -500,9 +503,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			val result = readUri(uri)
 			mainHandler.post {
 				if (result is ReadResult.Ok) {
-					doc.text = result.file.text
-					doc.lineEnding = result.file.lineEnding
-					doc.hasBom = result.file.hasBom
+					doc.applyFile(result.file)
 					doc.dirty = false
 				}
 				doc.loading = false
@@ -554,9 +555,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 							name = name,
 							text = result.file.text,
 							language = Languages.forFileName(name),
-							lineEnding = result.file.lineEnding,
-							hasBom = result.file.hasBom,
-						)
+						).apply { applyFile(result.file) }
 						// Replace the empty tab shown on first launch.
 						val placeholder = documents.singleOrNull()?.takeIf { it.uri == null && !it.dirty && it.text.isEmpty() }
 						if (placeholder != null) documents.remove(placeholder)
@@ -573,7 +572,21 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		if (doc === current) syncCurrent()
 		val uri = doc.uri ?: return saveAs(doc)
 		val textAtSave = doc.text
-		val bytes = TextFiles.encode(textAtSave, doc.lineEnding, doc.hasBom)
+		val bytes = when (val encoded = TextFiles.encode(textAtSave, doc.lineEnding, doc.encoding, doc.hasBom)) {
+			is EncodeResult.Success -> encoded.bytes
+			is EncodeResult.Unmappable -> {
+				closeAfterSaveId = null
+				val message = getString(
+					R.string.save_unmappable,
+					encoded.character,
+					encoded.line,
+					encoded.column,
+					doc.encoding.displayName,
+				)
+				AlertDialog.Builder(this).setMessage(message).setPositiveButton(android.R.string.ok, null).show()
+				return
+			}
+		}
 		io.execute {
 			val error = writeUri(uri, bytes)
 			mainHandler.post {
@@ -667,7 +680,14 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		class Failed(val message: String) : ReadResult()
 	}
 
-	private fun readUri(uri: Uri): ReadResult {
+	private fun EditorDocument.applyFile(file: TextFile) {
+		text = file.text
+		lineEnding = file.lineEnding
+		hasBom = file.hasBom
+		encoding = file.encoding
+	}
+
+	private fun readUri(uri: Uri, forced: TextEncoding? = null): ReadResult {
 		val bytes = try {
 			contentResolver.openInputStream(uri)?.use { input ->
 				val out = ByteArrayOutputStream()
@@ -685,10 +705,12 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		} catch (e: Exception) {
 			return ReadResult.Failed(getString(R.string.open_failed, e.message ?: e.javaClass.simpleName))
 		}
-		return when (val decoded = TextFiles.decode(bytes)) {
+		return when (val decoded = TextFiles.decode(bytes, forced)) {
 			is DecodeResult.Success -> ReadResult.Ok(decoded.file)
 			DecodeResult.Binary -> ReadResult.Failed(getString(R.string.file_binary))
-			DecodeResult.NotUtf8 -> ReadResult.Failed(getString(R.string.file_not_utf8))
+			DecodeResult.Unsupported -> ReadResult.Failed(
+				if (forced != null) getString(R.string.encoding_mismatch, forced.displayName) else getString(R.string.file_unsupported_encoding),
+			)
 		}
 	}
 
@@ -769,6 +791,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			languages.add(GROUP_LANGUAGE, ID_LANGUAGE_BASE + index, index, language.displayName)
 		}
 		languages.setGroupCheckable(GROUP_LANGUAGE, true, true)
+		val encodings = menu.addSubMenu(0, ID_ENCODING, 8, R.string.menu_encoding)
+		for ((index, encoding) in TextEncoding.entries.withIndex()) {
+			if (encoding.isAvailable) encodings.add(GROUP_ENCODING, ID_ENCODING_BASE + index, index, encoding.displayName)
+		}
+		encodings.setGroupCheckable(GROUP_ENCODING, true, true)
 		menu.add(0, ID_FONT_LARGER, 9, R.string.menu_font_larger)
 		menu.add(0, ID_FONT_SMALLER, 10, R.string.menu_font_smaller)
 		menu.add(0, ID_SUGGESTIONS, 11, R.string.menu_suggestions).isCheckable = true
@@ -776,6 +803,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	}
 
 	override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+		menu.findItem(ID_ENCODING_BASE + (current?.encoding ?: TextEncoding.UTF_8).ordinal)?.isChecked = true
 		val languageIndex = Languages.ALL.indexOf(current?.language ?: Languages.PLAIN)
 		menu.findItem(ID_LANGUAGE_BASE + languageIndex)?.isChecked = true
 		menu.findItem(ID_SUGGESTIONS)?.isChecked = prefs.getBoolean(KEY_SUGGESTIONS, false)
@@ -784,6 +812,10 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	override fun onOptionsItemSelected(item: MenuItem): Boolean {
 		val id = item.itemId
+		if (id in ID_ENCODING_BASE until ID_ENCODING_BASE + TextEncoding.entries.size) {
+			chooseEncoding(TextEncoding.entries[id - ID_ENCODING_BASE])
+			return true
+		}
 		if (id in ID_LANGUAGE_BASE until ID_LANGUAGE_BASE + Languages.ALL.size) {
 			setLanguage(Languages.ALL[id - ID_LANGUAGE_BASE])
 			return true
@@ -855,6 +887,73 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		val doc = current ?: return
 		doc.language = language
 		editor.language = language
+		updateStatus()
+		invalidateOptionsMenu()
+	}
+
+	/**
+	 * Either re-reads the file in [encoding] (when detection guessed wrong) or
+	 * keeps the text and converts it to [encoding] on the next save.
+	 */
+	private fun chooseEncoding(encoding: TextEncoding) {
+		val doc = current ?: return
+		if (encoding == doc.encoding) return
+		if (doc.uri == null) {
+			convertEncoding(doc, encoding)
+			return
+		}
+		val options = arrayOf(
+			getString(R.string.encoding_reopen, encoding.displayName),
+			getString(R.string.encoding_convert, encoding.displayName),
+		)
+		AlertDialog.Builder(this)
+			.setTitle(R.string.menu_encoding)
+			.setItems(options) { _, which ->
+				if (which == 0) confirmReopen(doc, encoding) else convertEncoding(doc, encoding)
+			}
+			.show()
+	}
+
+	private fun confirmReopen(doc: EditorDocument, encoding: TextEncoding) {
+		if (!doc.dirty) {
+			reopen(doc, encoding)
+			return
+		}
+		AlertDialog.Builder(this)
+			.setMessage(R.string.encoding_reopen_discard)
+			.setPositiveButton(R.string.action_discard) { _, _ -> reopen(doc, encoding) }
+			.setNegativeButton(R.string.action_cancel, null)
+			.show()
+	}
+
+	private fun reopen(doc: EditorDocument, encoding: TextEncoding) {
+		val uri = doc.uri ?: return
+		io.execute {
+			val result = readUri(uri, encoding)
+			mainHandler.post {
+				if (isDestroyed) return@post
+				when (result) {
+					is ReadResult.Ok -> {
+						doc.applyFile(result.file)
+						doc.dirty = false
+						doc.history.clear()
+						doc.selectionStart = 0
+						doc.selectionEnd = 0
+						if (doc === current) showDocument(Workspace.currentIndex) else renderTabs()
+					}
+					is ReadResult.Failed -> toast(result.message)
+				}
+			}
+		}
+	}
+
+	private fun convertEncoding(doc: EditorDocument, encoding: TextEncoding) {
+		doc.encoding = encoding
+		doc.hasBom = encoding.alwaysHasBom
+		if (!doc.dirty) {
+			doc.dirty = true
+			renderTabs()
+		}
 		updateStatus()
 		invalidateOptionsMenu()
 	}
@@ -945,6 +1044,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val ID_FONT_SMALLER = 11
 		const val ID_SUGGESTIONS = 12
 		const val ID_OPEN_FOLDER = 13
+		const val ID_ENCODING = 14
+		const val GROUP_ENCODING = 101
+		const val ID_ENCODING_BASE = 2000
 		const val GROUP_LANGUAGE = 100
 		const val ID_LANGUAGE_BASE = 1000
 

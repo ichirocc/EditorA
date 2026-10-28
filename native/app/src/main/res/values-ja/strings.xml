@@ -20,7 +20,13 @@
     <string name="open_failed">開けませんでした: %1$s</string>
     <string name="file_too_large">ファイルが大きすぎます（上限 %1$d MB）</string>
     <string name="file_binary">バイナリファイルのようです</string>
-    <string name="file_not_utf8">UTF-8 のテキストファイルのみ対応しています</string>
+    <string name="file_unsupported_encoding">対応していない文字コードです（対応: UTF-8、UTF-16、Shift_JIS、EUC-JP、ISO-2022-JP）</string>
+    <string name="encoding_mismatch">このファイルは %1$s として読めません</string>
+    <string name="save_unmappable">「%1$s」（%2$d 行 %3$d 列）は %4$s で保存できません。「文字コード」メニューで UTF-8 などに変えてから保存し直してください。</string>
+    <string name="menu_encoding">文字コード</string>
+    <string name="encoding_reopen">%1$s で開き直す</string>
+    <string name="encoding_convert">保存時に %1$s に変換</string>
+    <string name="encoding_reopen_discard">未保存の変更は失われます。開き直しますか？</string>
     <string name="file_gone">%1$s を開けなくなったため閉じました</string>
 
     <string name="unsaved_title">未保存の変更</string>

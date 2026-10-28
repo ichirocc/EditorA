@@ -3,6 +3,7 @@ package editora.app
 import android.net.Uri
 import editora.core.Language
 import editora.core.LineEnding
+import editora.core.TextEncoding
 import editora.core.Languages
 import editora.core.UndoHistory
 import org.json.JSONArray
@@ -18,6 +19,7 @@ class EditorDocument(
 	var language: Language = Languages.forFileName(name),
 	var lineEnding: LineEnding = LineEnding.LF,
 	var hasBom: Boolean = false,
+	var encoding: TextEncoding = TextEncoding.UTF_8,
 	var dirty: Boolean = false,
 	val id: String = UUID.randomUUID().toString(),
 ) {
@@ -72,6 +74,7 @@ class SessionStore(private val file: File) {
 				.put("language", doc.language.id)
 				.put("lineEnding", doc.lineEnding.name)
 				.put("bom", doc.hasBom)
+				.put("encoding", doc.encoding.name)
 				.put("dirty", doc.dirty)
 				.put("selectionStart", doc.selectionStart)
 				.put("selectionEnd", doc.selectionEnd)
@@ -106,6 +109,7 @@ class SessionStore(private val file: File) {
 					language = Languages.byId(tab.optString("language")),
 					lineEnding = runCatching { LineEnding.valueOf(tab.optString("lineEnding")) }.getOrDefault(LineEnding.LF),
 					hasBom = tab.optBoolean("bom"),
+					encoding = runCatching { TextEncoding.valueOf(tab.optString("encoding")) }.getOrDefault(TextEncoding.UTF_8),
 					dirty = tab.optBoolean("dirty"),
 					id = tab.getString("id"),
 				).apply {

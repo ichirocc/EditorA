@@ -21,7 +21,13 @@
     <string name="open_failed">Could not open: %1$s</string>
     <string name="file_too_large">File is too large (limit %1$d MB)</string>
     <string name="file_binary">This looks like a binary file</string>
-    <string name="file_not_utf8">Only UTF-8 text files are supported</string>
+    <string name="file_unsupported_encoding">Unsupported text encoding (supported: UTF-8, UTF-16, Shift_JIS, EUC-JP, ISO-2022-JP)</string>
+    <string name="encoding_mismatch">This file is not valid %1$s</string>
+    <string name="save_unmappable">“%1$s” (line %2$d, column %3$d) cannot be saved as %4$s. Choose another encoding such as UTF-8 from the Encoding menu, then save again.</string>
+    <string name="menu_encoding">Encoding</string>
+    <string name="encoding_reopen">Reopen as %1$s</string>
+    <string name="encoding_convert">Convert to %1$s when saving</string>
+    <string name="encoding_reopen_discard">Unsaved changes will be lost. Reopen the file?</string>
     <string name="file_gone">%1$s is no longer available and was closed</string>
 
     <string name="unsaved_title">Unsaved changes</string>
