@@ -9,8 +9,8 @@
 const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 /**
- * @typedef {"merged"|"closed"|"draft"|"computing"|"conflict"|"protected"|"behind"|"ci failed"|"ci running"|"head changed"|"unpushed"} BlockerCode
- * ("head changed" and "unpushed" are added by AssistantSession.)
+ * @typedef {"merged"|"closed"|"draft"|"computing"|"conflict"|"protected"|"behind"|"ci failed"|"ci running"|"ci starting"|"head changed"|"unpushed"} BlockerCode
+ * ("ci starting", "head changed" and "unpushed" are added by AssistantSession.)
  */
 
 /**

@@ -301,6 +301,30 @@ describe("OpenAI-compatible adapter", () => {
 		expect(error.message).toBe("400: Model Not Exist");
 	});
 
+	it("reads error messages in every provider's format", async () => {
+		for (const [body, expected] of [
+			[{ error: { message: "Model Not Exist" } }, "400: Model Not Exist"],
+			[{ message: "Bad key" }, "400: Bad key"],
+			[{ error: "quota" }, "400: quota"],
+			// Gemini wraps the error in an array.
+			[
+				[{ error: { code: 400, message: "Please pass a valid API key" } }],
+				"400: Please pass a valid API key",
+			],
+		]) {
+			const { fetch } = scriptedFetch([
+				new Response(JSON.stringify(body), { status: 400 }),
+			]);
+			const adapter = createOpenAICompatibleAdapter({
+				baseUrl: "https://x.test/v1",
+				apiKey: "k",
+				model: "m",
+				fetch,
+			});
+			await expect(adapter.listModels()).rejects.toThrow(expected);
+		}
+	});
+
 	it("falls back to native HTTP without streaming when fetch is blocked", async () => {
 		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
 		const nativePost = vi.fn(async () =>

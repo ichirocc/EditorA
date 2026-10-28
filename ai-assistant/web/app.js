@@ -163,6 +163,17 @@ function noteText(entry) {
 	return t(`note.${entry.code}`, entry.params || {});
 }
 
+let messagesFrame = 0;
+
+/** Re-renders the chat at most once per frame while a reply streams in. */
+function scheduleMessages() {
+	if (messagesFrame) return;
+	messagesFrame = requestAnimationFrame(() => {
+		messagesFrame = 0;
+		renderMessages();
+	});
+}
+
 function renderMessages() {
 	const atBottom =
 		$messages.scrollHeight - $messages.scrollTop - $messages.clientHeight < 40;
@@ -575,7 +586,7 @@ async function send(preset, display) {
 					// text back so it can be sent again.
 					if (removed && preset === undefined) $input.value = text;
 				}
-				renderMessages();
+				scheduleMessages();
 			}
 			if (done) break;
 		}

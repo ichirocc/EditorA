@@ -953,6 +953,7 @@ declare type LangStrings = {
 	"ai choose model": string;
 	"ai model manual": string;
 	"ai models unavailable": string;
+	"ai blocker ci starting": string;
 };
 
 declare var strings: LangStrings;

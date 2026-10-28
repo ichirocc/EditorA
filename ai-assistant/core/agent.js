@@ -169,6 +169,24 @@ export async function runAgentTurn({
 }
 
 /**
+ * Shortens an API error's message to the API's own explanation, e.g.
+ * "401: invalid x-api-key" instead of the status and the whole JSON body.
+ * The error object itself (its class and status) is kept.
+ * @param {unknown} error
+ * @returns {unknown} the same error
+ */
+export function tidyApiError(error) {
+	if (
+		error instanceof Anthropic.APIError &&
+		!(error instanceof Anthropic.APIUserAbortError)
+	) {
+		const detail = error.error?.error?.message;
+		if (detail) error.message = `${error.status}: ${detail}`;
+	}
+	return error;
+}
+
+/**
  * Session adapter for Claude.
  * @param {{apiKey:string, model:string, browser?:boolean}} options
  * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
@@ -183,12 +201,20 @@ export function createAnthropicAdapter({ apiKey, model, browser = false }) {
 				content: texts.map((text) => ({ type: "text", text })),
 			};
 		},
-		runTurn(options) {
-			return runAgentTurn({ client, model: this.model, ...options });
+		async runTurn(options) {
+			try {
+				return await runAgentTurn({ client, model: this.model, ...options });
+			} catch (error) {
+				throw tidyApiError(error);
+			}
 		},
 		async listModels() {
 			const ids = [];
-			for await (const entry of client.models.list()) ids.push(entry.id);
+			try {
+				for await (const entry of client.models.list()) ids.push(entry.id);
+			} catch (error) {
+				throw tidyApiError(error);
+			}
 			return ids;
 		},
 	};

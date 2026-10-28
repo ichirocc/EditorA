@@ -200,6 +200,72 @@ describe("AI assistant session", () => {
 		expect(readiness.blockers).toContainEqual({ code: "unpushed" });
 	});
 
+	it("waits for CI to register right after a push before allowing a merge", async () => {
+		const github = fakeGitHub();
+		github.listCheckRuns.mockResolvedValue([]);
+		let now = new Date("2026-10-27T01:02:03Z");
+		const session = new AssistantSession({
+			github,
+			ai: fakeAdapter(editingTurn),
+			owner: "o",
+			repo: "r",
+			baseBranch: "main",
+			now: () => now,
+		});
+		await session.start();
+		await session.send("edit");
+		await session.push("edit");
+		await session.openPullRequest({ title: "Fix" });
+
+		const early = await session.refreshStatus();
+		expect(early).toMatchObject({ ready: false, pending: true, warnings: [] });
+		expect(early.blockers).toEqual([{ code: "ci starting" }]);
+		await expect(session.merge()).rejects.toThrow(/cannot be merged/);
+
+		// Two minutes later with still no checks, the repository has no CI.
+		now = new Date("2026-10-27T01:04:04Z");
+		const later = await session.refreshStatus();
+		expect(later).toMatchObject({ ready: true, warnings: ["no checks"] });
+	});
+
+	it("treats a lagging pull request head as pending, not as a foreign push", async () => {
+		const github = fakeGitHub();
+		const session = await startedSession(github);
+		await session.send("edit");
+		await session.push("first");
+		await session.openPullRequest({ title: "Fix" });
+		session.changeSet.write("a.js", "two\n", "three\n");
+		github.commitToBranch.mockResolvedValueOnce({
+			commitSha: "c2",
+			treeSha: "tree2",
+		});
+		await session.push("second");
+
+		// GitHub still reports the first push as the head.
+		const readiness = await session.refreshStatus();
+		expect(readiness.pending).toBe(true);
+		expect(readiness.blockers).toEqual([{ code: "computing" }]);
+
+		github.getPullRequest.mockResolvedValue({
+			...(await github.getPullRequest()),
+			head: { sha: "someone-else" },
+		});
+		expect((await session.refreshStatus()).blockers).toEqual([
+			{ code: "head changed" },
+		]);
+	});
+
+	it("blocks the merge while a base branch merge is not pushed, even with nothing staged", async () => {
+		const session = await startedSession();
+		await session.send("edit");
+		await session.push("edit");
+		await session.openPullRequest({ title: "Fix" });
+		session.merging = { tip: session.head, baseSha: "main2", conflicted: [] };
+		expect((await session.refreshStatus()).blockers).toContainEqual({
+			code: "unpushed",
+		});
+	});
+
 	it("requires a push before opening a pull request", async () => {
 		const session = await startedSession();
 		await expect(session.openPullRequest({ title: "x" })).rejects.toThrow(

@@ -1,3 +1,4 @@
+import { apiErrorMessage } from "./errors.js";
 import { TOOLS, ToolInputError } from "./tools.js";
 
 /**
@@ -41,16 +42,7 @@ export class ProviderError extends Error {
  * @returns {ProviderError}
  */
 export function providerError(status, text) {
-	let message = text;
-	try {
-		const data = JSON.parse(text);
-		message =
-			data?.error?.message ||
-			data?.message ||
-			(typeof data?.error === "string" ? data.error : text);
-	} catch {
-		// Not JSON: keep the text.
-	}
+	const message = apiErrorMessage(text);
 	return new ProviderError(
 		`${status ? `${status}: ` : ""}${String(message || "Request failed").slice(0, 500)}`,
 		status,

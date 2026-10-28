@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
-import { createAnthropicAdapter, runAgentTurn } from "../core/agent.js";
+import {
+	createAnthropicAdapter,
+	runAgentTurn,
+	tidyApiError,
+} from "../core/agent.js";
 import { ToolInputError } from "../core/tools.js";
 
 /**
@@ -248,6 +252,23 @@ describe("AI assistant agent loop", () => {
 });
 
 describe("Anthropic adapter", () => {
+	it("shortens API errors to the API's explanation, keeping the error", () => {
+		const error = new Anthropic.AuthenticationError(
+			401,
+			{
+				type: "error",
+				error: { type: "authentication_error", message: "invalid x-api-key" },
+			},
+			undefined,
+			new Headers(),
+		);
+		expect(tidyApiError(error)).toBe(error);
+		expect(error.message).toBe("401: invalid x-api-key");
+		expect(error.status).toBe(401);
+		const abort = new Anthropic.APIUserAbortError();
+		expect(tidyApiError(abort).message).toBe("Request was aborted.");
+	});
+
 	it("builds user messages from text blocks and keeps a changeable model", () => {
 		const adapter = createAnthropicAdapter({
 			apiKey: "sk-ant",

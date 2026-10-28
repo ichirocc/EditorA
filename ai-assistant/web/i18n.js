@@ -41,6 +41,8 @@ const STRINGS = {
 		"note.merged": "Merged pull request #{number} into {branch}.",
 		"note.up to date": "The branch already has the latest {branch}.",
 		"note.merging base": "Merged the latest {branch} in. Conflicts: {paths}",
+		"note.merging base clean":
+			"Merged the latest {branch} in without conflicts. Review the changes and push.",
 		"note.merge aborted": "Cancelled merging {branch}.",
 		"note.stopped": "Stopped.",
 		"note.refusal": "The model declined this request.",
@@ -57,6 +59,7 @@ const STRINGS = {
 			"The branch is behind {branch} and must be updated first.",
 		"blocker.ci failed": "CI failed: {names}",
 		"blocker.ci running": "CI is still running: {names}",
+		"blocker.ci starting": "Waiting for CI to start…",
 		"blocker.head changed":
 			"The branch has commits that were not pushed from this session. Review the pull request on GitHub.",
 		"blocker.unpushed": "Push the staged changes first.",
@@ -124,6 +127,8 @@ const STRINGS = {
 		"note.up to date": "ブランチはすでに最新の {branch} を含んでいます。",
 		"note.merging base":
 			"最新の {branch} を取り込みました。コンフリクト: {paths}",
+		"note.merging base clean":
+			"最新の {branch} をコンフリクトなしで取り込みました。変更を確認してプッシュしてください。",
 		"note.merge aborted": "{branch} の取り込みを中止しました。",
 		"note.stopped": "停止しました。",
 		"note.refusal": "モデルがこのリクエストを辞退しました。",
@@ -139,6 +144,7 @@ const STRINGS = {
 		"blocker.behind": "ブランチが {branch} より古いため、先に更新が必要です。",
 		"blocker.ci failed": "CIが失敗しました: {names}",
 		"blocker.ci running": "CIが実行中です: {names}",
+		"blocker.ci starting": "CIの開始を待っています…",
 		"blocker.head changed":
 			"このセッション以外からブランチにコミットが追加されています。GitHub でプルリクエストを確認してください。",
 		"blocker.unpushed": "先にステージ中の変更をプッシュしてください。",

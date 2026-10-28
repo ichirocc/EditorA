@@ -514,7 +514,7 @@ export function createAssistantApp({
 						: {
 								kind: "note",
 								level: conflicted.length ? "error" : "info",
-								code: "merging base",
+								code: conflicted.length ? "merging base" : "merging base clean",
 								params: { branch: s.baseBranch, paths: conflicted.join(", ") },
 							},
 				);

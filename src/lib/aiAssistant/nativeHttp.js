@@ -5,6 +5,8 @@
  * redirect drops the Authorization header).
  */
 
+import { apiErrorMessage } from "../../../ai-assistant/core/errors.js";
+
 /**
  * Error for a failed native request, with the provider's message if the
  * body is JSON.
@@ -13,13 +15,7 @@
  */
 function nativeError(failure) {
 	const status = failure?.status ?? 0;
-	let message = failure?.error || "Request failed";
-	try {
-		const data = JSON.parse(message);
-		message = data?.error?.message || data?.message || message;
-	} catch {
-		// Not JSON: keep the text.
-	}
+	const message = apiErrorMessage(failure?.error || "Request failed");
 	const error = new Error(
 		`${status > 0 ? `${status}: ` : ""}${String(message).slice(0, 500)}`,
 	);

@@ -11,6 +11,9 @@ import { createToolExecutor } from "./tools.js";
 // GitHub lists at most 300 changed files in a comparison.
 const COMPARE_FILE_LIMIT = 300;
 const READ_CONCURRENCY = 6;
+// GitHub registers CI check runs a little after a push. Until this much time
+// has passed, "no checks yet" means "CI has not started", not "no CI".
+const CI_START_GRACE_MS = 2 * 60_000;
 
 /**
  * Merges one file's two versions against their common ancestor.
@@ -80,6 +83,10 @@ export default class AssistantSession {
 	#lastStateNote = "";
 	/**@type {string} the user's first message */
 	#brief = "";
+	/**@type {Set<string>} every commit this session pushed */
+	#pushedCommits = new Set();
+	/**@type {number} when the last push happened (ms) */
+	#pushedAt = 0;
 	#executeTool;
 
 	/**@type {{commitSha:string, treeSha:string}|null} head the assistant reads from */
@@ -272,6 +279,8 @@ export default class AssistantSession {
 			entries: this.changeSet.toTreeEntries(),
 		});
 		this.head = commit;
+		this.#pushedCommits.add(commit.commitSha);
+		this.#pushedAt = this.#now().getTime();
 		if (!this.merging) {
 			for (const change of this.changeSet.list()) {
 				this.pushedPaths.add(change.path);
@@ -458,16 +467,32 @@ export default class AssistantSession {
 		]);
 		this.pr = pr;
 		const readiness = evaluateMergeReadiness({ pr, checkRuns, combinedStatus });
+		const block = (code) => {
+			readiness.blockers.push({ code });
+			readiness.ready = false;
+		};
 		const tip = this.merging?.tip.commitSha ?? this.head.commitSha;
 		if (!pr.merged && pr.head.sha !== tip) {
-			// Someone else pushed to the branch: the user has not reviewed it.
-			readiness.blockers.push({ code: "head changed" });
-			readiness.ready = false;
+			if (this.#pushedCommits.has(pr.head.sha)) {
+				// An earlier push of ours: GitHub has not caught up yet.
+				readiness.pending = true;
+				block("computing");
+			} else {
+				// Someone else pushed to the branch: the user has not reviewed it.
+				block("head changed");
+			}
 		}
-		if (this.changeSet.size) {
-			readiness.blockers.push({ code: "unpushed" });
-			readiness.ready = false;
+		if (
+			!pr.merged &&
+			!readiness.checks.length &&
+			this.#now().getTime() - this.#pushedAt < CI_START_GRACE_MS
+		) {
+			// CI usually reports within seconds of a push; wait for it.
+			readiness.pending = true;
+			readiness.warnings = readiness.warnings.filter((w) => w !== "no checks");
+			block("ci starting");
 		}
+		if (this.changeSet.size || this.merging) block("unpushed");
 		this.readiness = readiness;
 		return readiness;
 	}

@@ -214,8 +214,10 @@ describe("AI assistant session: merging the base branch", () => {
 		// While merging, the PR head is still the branch tip: no "head changed".
 		session.pr = { number: 5 };
 		const readiness = await session.refreshStatus();
+		// (No CI has reported for the just-pushed commit yet, hence "ci starting".)
 		expect(readiness.blockers.map(({ code }) => code)).toEqual([
 			"conflict",
+			"ci starting",
 			"unpushed",
 		]);
 
