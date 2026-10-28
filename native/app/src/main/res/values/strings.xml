@@ -67,4 +67,10 @@
     <string name="menu_goto_line">Go to line</string>
     <string name="goto_line_hint">Line number (1–%1$d)</string>
     <string name="menu_line_ending">Line endings</string>
+
+    <string name="search_in_folder">Search in folder</string>
+    <string name="search_no_folder">Open a folder first</string>
+    <string name="searching">Searching… %1$d files</string>
+    <string name="search_done">%1$d matches in %2$d files searched</string>
+    <string name="search_limited">Stopped at %1$d matches</string>
 </resources>

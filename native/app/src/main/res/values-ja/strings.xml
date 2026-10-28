@@ -63,4 +63,10 @@
     <string name="menu_goto_line">行へ移動</string>
     <string name="goto_line_hint">行番号（1〜%1$d）</string>
     <string name="menu_line_ending">改行コード</string>
+
+    <string name="search_in_folder">フォルダ内を検索</string>
+    <string name="search_no_folder">先にフォルダを開いてください</string>
+    <string name="searching">検索中… %1$d ファイル</string>
+    <string name="search_done">%1$d 件（%2$d ファイルを検索）</string>
+    <string name="search_limited">%1$d 件で打ち切りました</string>
 </resources>

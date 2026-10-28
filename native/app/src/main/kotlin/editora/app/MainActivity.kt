@@ -116,6 +116,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	override fun onDestroy() {
 		if (Workspace.onDocumentLoaded == ::onDocumentLoaded) Workspace.onDocumentLoaded = null
 		previewPanel.hide()
+		folderPanel.release()
 		editor.release()
 		io.shutdown()
 		super.onDestroy()
@@ -224,6 +225,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			openUri(uri, persist = false)
 		}
 
+		override fun onOpenFileAt(uri: Uri, start: Int, end: Int) {
+			closePanel()
+			openUri(uri, persist = false, select = start until end)
+		}
+
 		override fun onPickFolder() {
 			startPicker(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_OPEN_FOLDER)
 		}
@@ -306,6 +312,18 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			.withEndAction { if (!panelOpen) folderPanel.visibility = View.GONE }
 			.start()
 		updateBackCallback()
+	}
+
+	/** Selects [range] in the editor (clamped) and scrolls it into view. */
+	private fun selectRange(range: IntRange) {
+		editor.post {
+			val length = editor.length()
+			val start = range.first.coerceIn(0, length)
+			val end = (range.last + 1).coerceIn(start, length)
+			editor.requestFocus()
+			editor.setSelection(start, end)
+			ensureCursorVisible()
+		}
 	}
 
 	private fun openPreview() {
@@ -600,10 +618,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		openUri(uri, persist = persistable)
 	}
 
-	private fun openUri(uri: Uri, persist: Boolean) {
+	private fun openUri(uri: Uri, persist: Boolean, select: IntRange? = null) {
 		val existing = Workspace.indexOfUri(uri)
 		if (existing >= 0) {
 			switchTo(existing)
+			select?.let(::selectRange)
 			return
 		}
 		if (persist) takePermission(uri)
@@ -626,6 +645,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 						if (placeholder != null) documents.remove(placeholder)
 						documents += doc
 						showDocument(documents.lastIndex)
+						select?.let(::selectRange)
 					}
 					is ReadResult.Failed -> toast(result.message)
 				}

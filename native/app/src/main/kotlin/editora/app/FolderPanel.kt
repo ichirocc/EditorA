@@ -38,6 +38,7 @@ class FolderPanel(
 ) : LinearLayout(context) {
 	interface Host {
 		fun onOpenFile(uri: Uri)
+		fun onOpenFileAt(uri: Uri, start: Int, end: Int)
 		fun onPickFolder()
 		fun onFileRenamed(oldUri: Uri, newUri: Uri, newName: String)
 		fun onFileDeleted(uri: Uri)
@@ -49,6 +50,8 @@ class FolderPanel(
 	private val emptyView = TextView(context)
 	private val list = ListView(context)
 	private val adapter = RowAdapter()
+	private val searchView = FolderSearchView(context) { uri, start, end -> host.onOpenFileAt(uri, start, end) }
+	private var searching = false
 
 	private var treeUri: Uri? = null
 	private var tree: FileTree? = null
@@ -74,6 +77,7 @@ class FolderPanel(
 			orientation = HORIZONTAL
 			gravity = Gravity.CENTER_VERTICAL
 			addView(title, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+			addView(smallButton("🔍") { setSearching(!searching) })
 			addView(smallButton(context.getString(R.string.new_file)) { promptCreate(rootRow(), directory = false) })
 			addView(smallButton("↻") { refresh() })
 			addView(smallButton("…") { host.onPickFolder() })
@@ -96,7 +100,26 @@ class FolderPanel(
 			true
 		}
 		addView(list, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+		searchView.visibility = GONE
+		addView(searchView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 		showEmpty()
+	}
+
+	/** Switches between the file tree and searching inside the folder. */
+	fun setSearching(enabled: Boolean) {
+		if (enabled && treeUri == null) {
+			host.onPickFolder()
+			return
+		}
+		searching = enabled
+		searchView.visibility = if (enabled) VISIBLE else GONE
+		list.visibility = if (enabled || treeUri == null) GONE else VISIBLE
+		emptyView.visibility = if (!enabled && treeUri == null) VISIBLE else GONE
+		if (enabled) searchView.focusQuery() else searchView.cancel()
+	}
+
+	fun release() {
+		searchView.release()
 	}
 
 	val hasFolder: Boolean get() = treeUri != null
@@ -104,7 +127,9 @@ class FolderPanel(
 	/** Shows [uri] (a tree URI with a persisted grant), re-expanding [expandedIds]. */
 	fun setFolder(uri: Uri?, expandedIds: Set<String> = emptySet()) {
 		treeUri = uri
+		searchView.treeUri = uri
 		loadsInFlight.clear()
+		if (searching) setSearching(false)
 		if (uri == null) {
 			tree = null
 			showEmpty()
