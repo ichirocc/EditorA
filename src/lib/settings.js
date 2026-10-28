@@ -175,7 +175,7 @@ class Settings {
 			checkForAppUpdates: false,
 			desktopMode: false,
 			console: this.CONSOLE_LEGACY,
-			keyboardMode: this.KEYBOARD_MODE_NO_SUGGESTIONS_AGGRESSIVE,
+			keyboardMode: this.KEYBOARD_MODE_NO_SUGGESTIONS,
 			rememberFiles: true,
 			rememberFolders: true,
 			diagonalScrolling: false,
