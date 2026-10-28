@@ -166,3 +166,29 @@ export async function runAgentTurn({
 		`Stopped after ${MAX_ROUNDS} tool rounds. Send a message to continue.`,
 	);
 }
+
+/**
+ * Session adapter for Claude.
+ * @param {{apiKey:string, model:string}} options
+ * @returns {import("./session").ModelAdapter & {listModels: () => Promise<string[]>}}
+ */
+export function createAnthropicAdapter({ apiKey, model }) {
+	const client = createClaudeClient(apiKey);
+	return {
+		model,
+		userMessage(texts) {
+			return {
+				role: "user",
+				content: texts.map((text) => ({ type: "text", text })),
+			};
+		},
+		runTurn(options) {
+			return runAgentTurn({ client, model: this.model, ...options });
+		},
+		async listModels() {
+			const ids = [];
+			for await (const entry of client.models.list()) ids.push(entry.id);
+			return ids;
+		},
+	};
+}

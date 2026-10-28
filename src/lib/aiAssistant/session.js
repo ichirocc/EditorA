@@ -1,4 +1,3 @@
-import { runAgentTurn } from "./agent";
 import ChangeSet from "./changeSet";
 import { hasConflictMarkers, merge3 } from "./merge3";
 import { evaluateMergeReadiness } from "./mergeGate";
@@ -50,6 +49,16 @@ async function forEachLimited(items, limit, fn) {
 }
 
 /**
+ * The model side of a session, one per provider (see agent.js and
+ * openaiCompatible.js). Messages are kept in the provider's own format.
+ * @typedef {object} ModelAdapter
+ * @property {string} model can be changed between turns
+ * @property {(texts:string[]) => any} userMessage
+ * @property {(options:{system:string, messages:any[], executeTool:(name:string, input:any) => Promise<string>, onEvent?:(event:import("./agent").AgentEvent) => void, signal?:AbortSignal}) => Promise<void>} runTurn
+ *   streams one turn, appending the assistant's messages and tool results
+ */
+
+/**
  * One briefing → edit → push → pull request → merge cycle against a
  * repository branch.
  *
@@ -61,10 +70,6 @@ async function forEachLimited(items, limit, fn) {
 export default class AssistantSession {
 	/**@type {import("./github").GitHubClient} */
 	#github;
-	/**@type {any} */
-	#claude;
-	/**@type {typeof runAgentTurn} */
-	#runTurn;
 	/**@type {() => Date} */
 	#now;
 	/**@type {Map<string, Promise<any>>} */
@@ -73,6 +78,8 @@ export default class AssistantSession {
 	#fileCache = new Map();
 	/**@type {string} */
 	#lastStateNote = "";
+	/**@type {string} the user's first message */
+	#brief = "";
 	#executeTool;
 
 	/**@type {{commitSha:string, treeSha:string}|null} head the assistant reads from */
@@ -99,29 +106,16 @@ export default class AssistantSession {
 	/**
 	 * @param {object} options
 	 * @param {import("./github").GitHubClient} options.github
-	 * @param {any} options.claude Anthropic client
-	 * @param {string} options.model
+	 * @param {ModelAdapter} options.ai
 	 * @param {string} options.owner
 	 * @param {string} options.repo
 	 * @param {string} options.baseBranch
-	 * @param {typeof runAgentTurn} [options.runTurn]
 	 * @param {() => Date} [options.now]
 	 */
-	constructor({
-		github,
-		claude,
-		model,
-		owner,
-		repo,
-		baseBranch,
-		runTurn = runAgentTurn,
-		now = () => new Date(),
-	}) {
+	constructor({ github, ai, owner, repo, baseBranch, now = () => new Date() }) {
 		this.#github = github;
-		this.#claude = claude;
-		this.#runTurn = runTurn;
 		this.#now = now;
-		this.model = model;
+		this.ai = ai;
 		this.owner = owner;
 		this.repo = repo;
 		this.baseBranch = baseBranch;
@@ -169,7 +163,7 @@ export default class AssistantSession {
 			throw new Error("This session is merged. Start a new session.");
 		}
 
-		const content = [];
+		const texts = [];
 		const note = buildStateNote({
 			workBranch: this.workBranch,
 			stagedPaths: this.changeSet.list().map((change) => change.path),
@@ -181,17 +175,13 @@ export default class AssistantSession {
 					}
 				: null,
 		});
-		if (note !== this.#lastStateNote) {
-			content.push({ type: "text", text: note });
-		}
-		content.push({ type: "text", text });
+		if (note !== this.#lastStateNote) texts.push(note);
+		texts.push(text);
 
 		const before = this.messages.length;
-		this.messages.push({ role: "user", content });
+		this.messages.push(this.ai.userMessage(texts));
 		try {
-			await this.#runTurn({
-				client: this.#claude,
-				model: this.model,
+			await this.ai.runTurn({
 				system: this.system,
 				messages: this.messages,
 				executeTool: this.#executeTool,
@@ -205,18 +195,15 @@ export default class AssistantSession {
 			}
 			throw error;
 		}
-		if (this.messages.length > before) this.#lastStateNote = note;
+		if (this.messages.length > before) {
+			this.#lastStateNote = note;
+			this.#brief ||= text;
+		}
 	}
 
 	/** First user message, used to prefill commit and pull request titles. */
 	get briefTitle() {
-		const first = this.messages.find(
-			(message) => message.role === "user" && Array.isArray(message.content),
-		);
-		// The last text block is the user's own words; a state note may precede it.
-		const text =
-			first?.content.filter((block) => block.type === "text").pop()?.text || "";
-		const line = text.split("\n").find((entry) => entry.trim()) || "";
+		const line = this.#brief.split("\n").find((entry) => entry.trim()) || "";
 		return line.trim().slice(0, 72);
 	}
 

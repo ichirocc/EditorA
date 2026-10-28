@@ -5,8 +5,16 @@ import alert from "dialogs/alert";
 import confirm from "dialogs/confirm";
 import multiPrompt from "dialogs/multiPrompt";
 import prompt from "dialogs/prompt";
+import select from "dialogs/select";
 import DOMPurify from "dompurify";
 import { diffHunks, diffStat } from "lib/aiAssistant/diff";
+import {
+	createModelAdapter,
+	getProvider,
+	isAllowedBaseUrl,
+	PROVIDERS,
+	secretNameFor,
+} from "lib/aiAssistant/providers";
 import secrets from "lib/aiAssistant/secrets";
 import appSettings from "lib/settings";
 import markdownIt from "markdown-it";
@@ -131,7 +139,9 @@ function onSelected() {
 
 function config() {
 	return {
+		provider: "anthropic",
 		model: "claude-opus-5-5",
+		baseUrl: "",
 		owner: "",
 		repo: "",
 		baseBranch: "main",
@@ -139,14 +149,26 @@ function config() {
 	};
 }
 
+/** @param {import("lib/aiAssistant/providers").Provider} provider */
+function providerLabel(provider) {
+	return provider.id === "custom"
+		? strings["ai provider custom"]
+		: provider.label;
+}
+
+function showSubtitle() {
+	const { owner, repo, baseBranch, provider, model } = config();
+	const target = owner && repo ? `${owner}/${repo} · ${baseBranch} · ` : "";
+	$subtitle.textContent = `${target}${providerLabel(getProvider(provider))}: ${model}`;
+}
+
 function showIntro() {
 	const { owner, repo, baseBranch } = config();
+	showSubtitle();
 	if (!owner || !repo) {
-		$subtitle.textContent = "";
 		note(strings["ai setup required"]);
 		return;
 	}
-	$subtitle.textContent = `${owner}/${repo} · ${baseBranch}`;
 	note(
 		strings["ai session started"]
 			.replace("{repo}", `${owner}/${repo}`)
@@ -155,17 +177,169 @@ function showIntro() {
 }
 
 async function openSettings() {
-	const current = config();
-	const [hasApiKey, hasToken] = await Promise.all([
-		secrets.get("anthropic_api_key").then(Boolean, () => false),
-		secrets.get("github_token").then(Boolean, () => false),
+	const choice = await choose(strings["ai settings"], [
+		["model", strings["ai settings model"]],
+		["repo", strings["ai settings repo"]],
 	]);
-	const keepHint = (name, saved) =>
-		saved ? strings["leave empty to keep"].replace("{name}", name) : name;
+	if (choice === "model") await openModelSettings();
+	else if (choice === "repo") await openRepoSettings();
+}
+
+/**
+ * select() that resolves null when cancelled.
+ * @param {string} title
+ * @param {[string, string][]} items
+ * @param {string} [value] selected item
+ * @returns {Promise<string|null>}
+ */
+function choose(title, items, value) {
+	return new Promise((resolve) => {
+		select(title, items, {
+			default: value,
+			onCancel: () => resolve(null),
+		}).then(resolve, () => resolve(null));
+	});
+}
+
+/**
+ * @param {string} name
+ * @param {boolean} saved
+ */
+function keepHint(name, saved) {
+	return saved ? strings["leave empty to keep"].replace("{name}", name) : name;
+}
+
+async function openModelSettings() {
+	const current = config();
+	const providerId = await choose(
+		strings["ai provider"],
+		PROVIDERS.map((provider) => [provider.id, providerLabel(provider)]),
+		current.provider,
+	);
+	if (!providerId) return;
+
+	const provider = getProvider(providerId);
+	const secretName = secretNameFor(provider);
+	const savedKey = await secrets.get(secretName).catch(() => "");
+	const sameProvider = providerId === current.provider;
+	const inputs = [
+		{
+			id: "apiKey",
+			placeholder: keepHint(
+				strings["ai api key"].replace("{provider}", providerLabel(provider)),
+				!!savedKey,
+			),
+			type: "password",
+			sensitive: true,
+			required: !savedKey,
+		},
+	];
+	if (provider.kind === "openai") {
+		inputs.push({
+			id: "baseUrl",
+			placeholder: strings["ai base url"],
+			type: "url",
+			value: (sameProvider && current.baseUrl) || provider.baseUrl,
+			required: true,
+		});
+	}
 
 	let values;
 	try {
-		values = await multiPrompt(strings["ai settings"], [
+		values = await multiPrompt(strings["ai settings model"], inputs);
+	} catch {
+		return; // cancelled
+	}
+	const typedKey = values.apiKey.trim();
+	const baseUrl =
+		provider.kind === "openai" ? values.baseUrl.trim().replace(/\/+$/, "") : "";
+	if (provider.kind === "openai" && !isAllowedBaseUrl(baseUrl)) {
+		alert(strings.error, strings["ai invalid base url"]);
+		return;
+	}
+
+	const model = await chooseModel({
+		provider,
+		baseUrl,
+		apiKey: typedKey || savedKey,
+		current: sameProvider ? current.model : provider.defaultModel || "",
+	});
+	if (!model) return;
+
+	// Conversations are kept in the provider's own format, so another
+	// provider or endpoint needs a new session.
+	const providerChanged = !sameProvider || baseUrl !== (current.baseUrl || "");
+	if (providerChanged && !(await confirmDiscard())) return;
+	try {
+		if (typedKey) await secrets.set(secretName, typedKey);
+	} catch (error) {
+		alert(strings.error, error.message);
+		return;
+	}
+	await appSettings.update(
+		{ aiAssistant: { ...current, provider: providerId, model, baseUrl } },
+		false,
+	);
+
+	if (providerChanged || !session) {
+		resetSession();
+	} else {
+		session.ai.model = model;
+		showSubtitle();
+	}
+}
+
+/**
+ * Lets the user pick one of the provider's current models, or type one.
+ * @param {object} options
+ * @param {import("lib/aiAssistant/providers").Provider} options.provider
+ * @param {string} options.baseUrl
+ * @param {string} options.apiKey
+ * @param {string} options.current preselected model
+ * @returns {Promise<string|null>}
+ */
+async function chooseModel({ provider, baseUrl, apiKey, current }) {
+	const manual = "\u0000manual";
+	let models = [];
+	let failure = "";
+	try {
+		const adapter = await createModelAdapter({
+			provider,
+			model: current,
+			baseUrl,
+			apiKey,
+		});
+		models = await adapter.listModels();
+	} catch (error) {
+		failure = error?.message || String(error);
+	}
+
+	if (models.length) {
+		const picked = await choose(
+			strings["ai choose model"],
+			[...models.map((id) => [id, id]), [manual, strings["ai model manual"]]],
+			models.includes(current) ? current : undefined,
+		);
+		if (picked !== manual) return picked;
+	}
+	const typed = await prompt(
+		failure
+			? strings["ai models unavailable"].replace("{error}", failure)
+			: strings["ai model"],
+		current,
+		"text",
+		{ required: true },
+	);
+	return typed ? String(typed).trim() : null;
+}
+
+async function openRepoSettings() {
+	const current = config();
+	const hasToken = await secrets.get("github_token").then(Boolean, () => false);
+
+	let values;
+	try {
+		values = await multiPrompt(strings["ai settings repo"], [
 			{
 				id: "owner",
 				placeholder: strings["repository owner"],
@@ -188,20 +362,6 @@ async function openSettings() {
 				required: true,
 			},
 			{
-				id: "model",
-				placeholder: strings["ai model"],
-				type: "text",
-				value: current.model,
-				required: true,
-			},
-			{
-				id: "apiKey",
-				placeholder: keepHint(strings["anthropic api key"], hasApiKey),
-				type: "password",
-				sensitive: true,
-				required: !hasApiKey,
-			},
-			{
 				id: "githubToken",
 				placeholder: keepHint(strings["github token"], hasToken),
 				type: "password",
@@ -214,10 +374,10 @@ async function openSettings() {
 	}
 
 	const next = {
+		...current,
 		owner: values.owner.trim(),
 		repo: values.repo.trim(),
 		baseBranch: values.baseBranch.trim(),
-		model: values.model.trim(),
 	};
 	const targetChanged =
 		next.owner !== current.owner ||
@@ -226,7 +386,6 @@ async function openSettings() {
 	if (targetChanged && !(await confirmDiscard())) return;
 
 	try {
-		if (values.apiKey) await secrets.set("anthropic_api_key", values.apiKey);
 		if (values.githubToken) {
 			await secrets.set("github_token", values.githubToken.trim());
 		}
@@ -234,16 +393,11 @@ async function openSettings() {
 		alert(strings.error, error.message);
 		return;
 	}
-
 	await appSettings.update({ aiAssistant: next }, false);
 
-	// Keys are read when a session starts, so new keys apply to the next
-	// session; a different repository or branch needs a new session now.
-	if (targetChanged || !session) {
-		resetSession();
-	} else {
-		session.model = next.model;
-	}
+	// The token is read when a session starts, so a new token applies to the
+	// next session; a different repository or branch needs a new session now.
+	if (targetChanged || !session) resetSession();
 }
 
 async function newSession() {
@@ -281,12 +435,13 @@ function resetSession() {
 async function ensureSession() {
 	if (session) return session;
 
-	const { owner, repo, baseBranch, model } = config();
+	const { owner, repo, baseBranch, model, baseUrl, ...target } = config();
+	const provider = getProvider(target.provider);
 	const [apiKey, githubToken] = await Promise.all([
-		secrets.get("anthropic_api_key"),
+		secrets.get(secretNameFor(provider)),
 		secrets.get("github_token"),
 	]);
-	if (!owner || !repo || !apiKey || !githubToken) {
+	if (!owner || !repo || !model || !apiKey || !githubToken) {
 		alert(strings["ai assistant"], strings["ai setup required"]);
 		return null;
 	}
@@ -294,18 +449,17 @@ async function ensureSession() {
 	const [
 		{ default: AssistantSession },
 		{ createGitHubClient },
-		agent,
 		{ nativeGetText },
+		ai,
 	] = await Promise.all([
 		import("lib/aiAssistant/session"),
 		import("lib/aiAssistant/github"),
-		import("lib/aiAssistant/agent"),
 		import("lib/aiAssistant/nativeHttp"),
+		createModelAdapter({ provider, model, baseUrl, apiKey }),
 	]);
 	const created = new AssistantSession({
 		github: createGitHubClient({ token: githubToken, getText: nativeGetText }),
-		claude: agent.createClaudeClient(apiKey),
-		model,
+		ai,
 		owner,
 		repo,
 		baseBranch,

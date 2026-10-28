@@ -893,7 +893,6 @@ declare type LangStrings = {
 	"plugin-review:unrated": string;
 	"ai assistant": string;
 	"ai settings": string;
-	"anthropic api key": string;
 	"github token": string;
 	"repository owner": string;
 	"repository name": string;
@@ -944,6 +943,16 @@ declare type LangStrings = {
 	"ai merge aborted": string;
 	"ai up to date": string;
 	"ai ci passed": string;
+	"ai settings model": string;
+	"ai settings repo": string;
+	"ai provider": string;
+	"ai provider custom": string;
+	"ai api key": string;
+	"ai base url": string;
+	"ai invalid base url": string;
+	"ai choose model": string;
+	"ai model manual": string;
+	"ai models unavailable": string;
 };
 
 declare var strings: LangStrings;

@@ -154,7 +154,8 @@ public class Authenticator extends CordovaPlugin {
         for (String secretName : SECRET_NAMES) {
             if (secretName.equals(name)) return true;
         }
-        return false;
+        // API keys of the other AI providers: ai_key_<provider id>.
+        return name != null && name.matches("ai_key_[a-z0-9_]{1,32}");
     }
 
     private void startLogin(JSONObject options, CallbackContext callbackContext) {

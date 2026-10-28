@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 
 import tag from "html-tag-js";
+import { runAgentTurn } from "lib/aiAssistant/agent";
 import * as diff from "lib/aiAssistant/diff";
+import * as providers from "lib/aiAssistant/providers";
 import AssistantSession from "lib/aiAssistant/session";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { loadSourceModule } from "../helpers/loadSourceModule.js";
@@ -19,7 +21,12 @@ Object.defineProperty(HTMLElement.prototype, "content", {
  * Loads the sidebar app with dialogs, storage and GitHub replaced, and a fake
  * Claude client that edits a file on the first turn.
  */
-function loadApp({ settings, secretValues = {}, dialogs = {} }) {
+function loadApp({
+	settings,
+	secretValues = {},
+	dialogs = {},
+	models = ["claude-opus-5-5"],
+}) {
 	const github = {
 		getBranchHead: vi.fn(async () => ({ commitSha: "base", treeSha: "t0" })),
 		listFiles: vi.fn(async () => ({
@@ -107,9 +114,25 @@ function loadApp({ settings, secretValues = {}, dialogs = {} }) {
 		confirm: vi.fn(async () => true),
 		prompt: vi.fn(async (_message, value) => value),
 		multiPrompt: vi.fn(),
+		select: vi.fn(),
 		openInBrowser: vi.fn(),
 		...dialogs,
 	};
+	// The session talks to the fake Claude client through the real loop.
+	const createModelAdapter = vi.fn(async ({ model }) => ({
+		model,
+		userMessage: (texts) => ({
+			role: "user",
+			content: texts.map((text) => ({ type: "text", text })),
+		}),
+		runTurn(options) {
+			return runAgentTurn({ client: claude, model: this.model, ...options });
+		},
+		listModels: async () => {
+			if (models instanceof Error) throw models;
+			return models;
+		},
+	}));
 	const autosize = Object.assign(() => {}, { update() {} });
 	const markdown = () => ({ render: (text) => `<p>${text}</p>` });
 
@@ -123,6 +146,7 @@ function loadApp({ settings, secretValues = {}, dialogs = {} }) {
 			"dialogs/confirm": { __esModule: true, default: mocks.confirm },
 			"dialogs/multiPrompt": { __esModule: true, default: mocks.multiPrompt },
 			"dialogs/prompt": { __esModule: true, default: mocks.prompt },
+			"dialogs/select": { __esModule: true, default: mocks.select },
 			dompurify: { __esModule: true, default: { sanitize: (html) => html } },
 			"lib/aiAssistant/diff": diff,
 			"lib/aiAssistant/secrets": {
@@ -141,7 +165,7 @@ function loadApp({ settings, secretValues = {}, dialogs = {} }) {
 				default: AssistantSession,
 			},
 			"lib/aiAssistant/github": { createGitHubClient: () => github },
-			"lib/aiAssistant/agent": { createClaudeClient: () => claude },
+			"lib/aiAssistant/providers": { ...providers, createModelAdapter },
 			"lib/aiAssistant/nativeHttp": { nativeGetText: vi.fn() },
 		},
 		{
@@ -156,7 +180,17 @@ function loadApp({ settings, secretValues = {}, dialogs = {} }) {
 	const container = document.createElement("div");
 	document.body.append(container);
 	init(container);
-	return { icon, id, title, container, github, claude, mocks, appSettings };
+	return {
+		icon,
+		id,
+		title,
+		container,
+		github,
+		claude,
+		mocks,
+		appSettings,
+		createModelAdapter,
+	};
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -220,7 +254,9 @@ it("chats, shows the diff, pushes, opens a PR and merges on request", async () =
 		settings: configured,
 		secretValues: { ...keys },
 	});
-	expect(container.querySelector(".subtitle").textContent).toBe("o/r · main");
+	expect(container.querySelector(".subtitle").textContent).toBe(
+		"o/r · main · Anthropic Claude: claude-opus-5-5",
+	);
 
 	container.querySelector("textarea").value = "The answer should be 42";
 	container.querySelector(".composer button").click();
@@ -307,18 +343,17 @@ it("does not merge when the user cancels the confirmation", async () => {
 	expect(github.mergePullRequest).not.toHaveBeenCalled();
 });
 
-it("saves settings without putting keys in the settings file", async () => {
+it("saves repository settings without putting the token in the settings file", async () => {
 	const secretValues = {};
-	const { container, appSettings } = loadApp({
+	const { container, appSettings, mocks } = loadApp({
 		settings: { ...configured, owner: "", repo: "" },
 		secretValues,
 		dialogs: {
+			select: vi.fn(async () => "repo"),
 			multiPrompt: vi.fn(async () => ({
 				owner: " me ",
 				repo: "proj",
 				baseBranch: "main",
-				model: "claude-opus-5-5",
-				apiKey: "sk-ant-secret",
 				githubToken: " ghp_secret ",
 			})),
 		},
@@ -326,25 +361,145 @@ it("saves settings without putting keys in the settings file", async () => {
 	container.querySelectorAll(".header .icon-button")[1].click();
 	for (let i = 0; i < 5; i++) await flush();
 
+	expect(mocks.select.mock.calls[0][1]).toEqual([
+		["model", "ai settings model"],
+		["repo", "ai settings repo"],
+	]);
 	expect(appSettings.update).toHaveBeenCalledWith(
 		{
 			aiAssistant: {
+				provider: "anthropic",
+				model: "claude-opus-5-5",
+				baseUrl: "",
 				owner: "me",
 				repo: "proj",
 				baseBranch: "main",
-				model: "claude-opus-5-5",
 			},
 		},
 		false,
 	);
 	expect(JSON.stringify(appSettings.value)).not.toContain("secret");
-	expect(secretValues).toEqual({
-		anthropic_api_key: "sk-ant-secret",
-		github_token: "ghp_secret",
-	});
+	expect(secretValues).toEqual({ github_token: "ghp_secret" });
 	expect(container.querySelector(".subtitle").textContent).toBe(
-		"me/proj · main",
+		"me/proj · main · Anthropic Claude: claude-opus-5-5",
 	);
+});
+
+it("switches to DeepSeek with a model picked from the provider's list", async () => {
+	const secretValues = { ...keys };
+	const select = vi
+		.fn()
+		.mockResolvedValueOnce("model")
+		.mockResolvedValueOnce("deepseek")
+		.mockResolvedValueOnce("deepseek-pro");
+	const { container, appSettings, mocks, createModelAdapter } = loadApp({
+		settings: configured,
+		secretValues,
+		models: ["deepseek-flash", "deepseek-pro"],
+		dialogs: {
+			select,
+			multiPrompt: vi.fn(async () => ({
+				apiKey: " sk-ds ",
+				baseUrl: "https://api.deepseek.com/",
+			})),
+		},
+	});
+	container.querySelectorAll(".header .icon-button")[1].click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	// Provider list, then the key and endpoint, then the live model list.
+	expect(select.mock.calls[1][1]).toContainEqual(["deepseek", "DeepSeek"]);
+	expect(select.mock.calls[1][2].default).toBe("anthropic");
+	expect(mocks.multiPrompt.mock.calls[0][1].map((input) => input.id)).toEqual([
+		"apiKey",
+		"baseUrl",
+	]);
+	expect(createModelAdapter).toHaveBeenCalledWith({
+		provider: providers.getProvider("deepseek"),
+		model: "deepseek-flash",
+		baseUrl: "https://api.deepseek.com",
+		apiKey: "sk-ds",
+	});
+	expect(select.mock.calls[2][1]).toEqual([
+		["deepseek-flash", "deepseek-flash"],
+		["deepseek-pro", "deepseek-pro"],
+		["\u0000manual", "ai model manual"],
+	]);
+	expect(select.mock.calls[2][2].default).toBe("deepseek-flash");
+
+	expect(appSettings.update).toHaveBeenCalledWith(
+		{
+			aiAssistant: {
+				...configured,
+				provider: "deepseek",
+				model: "deepseek-pro",
+				baseUrl: "https://api.deepseek.com",
+			},
+		},
+		false,
+	);
+	expect(secretValues.ai_key_deepseek).toBe("sk-ds");
+	expect(JSON.stringify(appSettings.value)).not.toContain("sk-ds");
+	expect(container.querySelector(".subtitle").textContent).toBe(
+		"o/r · main · DeepSeek: deepseek-pro",
+	);
+});
+
+it("asks for a model name when the model list cannot be loaded", async () => {
+	const select = vi
+		.fn()
+		.mockResolvedValueOnce("model")
+		.mockResolvedValueOnce("custom");
+	const { container, appSettings, mocks } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		models: new Error("401: bad key"),
+		dialogs: {
+			select,
+			multiPrompt: vi.fn(async () => ({
+				apiKey: "local",
+				baseUrl: "http://localhost:11434/v1",
+			})),
+			prompt: vi.fn(async () => " qwen-coder "),
+		},
+	});
+	container.querySelectorAll(".header .icon-button")[1].click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(mocks.prompt).toHaveBeenCalledWith(
+		"ai models unavailable",
+		"",
+		"text",
+		{ required: true },
+	);
+	expect(appSettings.update.mock.calls[0][0].aiAssistant).toMatchObject({
+		provider: "custom",
+		model: "qwen-coder",
+		baseUrl: "http://localhost:11434/v1",
+	});
+});
+
+it("refuses a plain HTTP endpoint that is not on the device", async () => {
+	const select = vi
+		.fn()
+		.mockResolvedValueOnce("model")
+		.mockResolvedValueOnce("custom");
+	const { container, appSettings, mocks } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		dialogs: {
+			select,
+			multiPrompt: vi.fn(async () => ({
+				apiKey: "k",
+				baseUrl: "http://192.168.1.5:11434/v1",
+			})),
+		},
+	});
+	container.querySelectorAll(".header .icon-button")[1].click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(mocks.alert).toHaveBeenCalledWith("error", "ai invalid base url");
+	expect(appSettings.update).not.toHaveBeenCalled();
 });
 
 it("merges the base branch in when the pull request conflicts", async () => {

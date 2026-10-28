@@ -1,0 +1,411 @@
+import {
+	createOpenAICompatibleAdapter,
+	OPENAI_TOOLS,
+	ProviderError,
+} from "lib/aiAssistant/openaiCompatible";
+import { ToolInputError } from "lib/aiAssistant/tools";
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * A streamed response whose bytes arrive in awkward pieces, to exercise the
+ * SSE line buffering.
+ * @param {object[]} chunks chat completion chunks
+ */
+function sseResponse(chunks) {
+	const text = `: keep-alive\n\n${chunks
+		.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+		.join("")}data: [DONE]\n\n`;
+	const bytes = new TextEncoder().encode(text);
+	const stream = new ReadableStream({
+		start(controller) {
+			for (let i = 0; i < bytes.length; i += 7) {
+				controller.enqueue(bytes.slice(i, i + 7));
+			}
+			controller.close();
+		},
+	});
+	return new Response(stream, { status: 200 });
+}
+
+const delta = (value, finish = null) => ({
+	choices: [{ index: 0, delta: value, finish_reason: finish }],
+});
+
+/** Replies one scripted response per request and records the bodies. */
+function scriptedFetch(responses) {
+	const bodies = [];
+	const fetch = vi.fn(async (url, init) => {
+		bodies.push({
+			url,
+			...init,
+			json: init.body ? JSON.parse(init.body) : null,
+		});
+		const next = responses.shift();
+		if (next instanceof Error) throw next;
+		return next;
+	});
+	return { fetch, bodies };
+}
+
+const userTurn = (adapter) => [adapter.userMessage(["<app_state>…", "fix it"])];
+
+describe("OpenAI-compatible adapter", () => {
+	it("converts the tools to function definitions", () => {
+		expect(OPENAI_TOOLS.map((tool) => tool.function.name)).toEqual([
+			"list_files",
+			"read_file",
+			"edit_file",
+			"write_file",
+			"delete_file",
+		]);
+		expect(OPENAI_TOOLS[1]).toMatchObject({
+			type: "function",
+			function: { parameters: { type: "object", required: ["path"] } },
+		});
+	});
+
+	it("streams text and runs tool calls until the model stops", async () => {
+		const { fetch, bodies } = scriptedFetch([
+			sseResponse([
+				delta({ role: "assistant", reasoning_content: "Look first." }),
+				delta({ content: "Reading " }),
+				delta({ content: "a.js." }),
+				delta({
+					tool_calls: [
+						{
+							index: 0,
+							id: "call_a",
+							type: "function",
+							function: { name: "read_file", arguments: '{"pa' },
+						},
+					],
+				}),
+				delta({
+					tool_calls: [{ index: 0, function: { arguments: 'th":"a.js"}' } }],
+				}),
+				delta({
+					tool_calls: [
+						{
+							index: 1,
+							id: "call_b",
+							function: { name: "read_file", arguments: '{"path":"b.js"}' },
+						},
+					],
+				}),
+				delta({}, "tool_calls"),
+			]),
+			sseResponse([delta({ content: "Done." }), delta({}, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://api.deepseek.com/",
+			apiKey: "sk-ds",
+			model: "deepseek-flash",
+			fetch,
+		});
+		const messages = userTurn(adapter);
+		const events = [];
+		const executeTool = vi.fn(async (_name, input) => {
+			if (input.path === "b.js")
+				throw new ToolInputError("File not found: b.js");
+			return "content of a";
+		});
+
+		await adapter.runTurn({
+			system: "sys",
+			messages,
+			executeTool,
+			onEvent: (event) => events.push(event),
+		});
+
+		expect(bodies[0].url).toBe("https://api.deepseek.com/chat/completions");
+		expect(bodies[0].headers.Authorization).toBe("Bearer sk-ds");
+		expect(bodies[0].json).toMatchObject({
+			model: "deepseek-flash",
+			stream: true,
+			tool_choice: "auto",
+			messages: [
+				{ role: "system", content: "sys" },
+				{ role: "user", content: "<app_state>…\n\nfix it" },
+			],
+		});
+		expect(executeTool.mock.calls).toEqual([
+			["read_file", { path: "a.js" }],
+			["read_file", { path: "b.js" }],
+		]);
+		expect(messages.slice(1)).toEqual([
+			{
+				role: "assistant",
+				content: "Reading a.js.",
+				tool_calls: [
+					{
+						id: "call_a",
+						type: "function",
+						function: { name: "read_file", arguments: '{"path":"a.js"}' },
+					},
+					{
+						id: "call_b",
+						type: "function",
+						function: { name: "read_file", arguments: '{"path":"b.js"}' },
+					},
+				],
+				reasoning_content: "Look first.",
+			},
+			{ role: "tool", tool_call_id: "call_a", content: "content of a" },
+			{
+				role: "tool",
+				tool_call_id: "call_b",
+				content: "Error: File not found: b.js",
+			},
+			{ role: "assistant", content: "Done." },
+		]);
+		// System prompt, user, assistant and both tool results.
+		expect(bodies[1].json.messages).toHaveLength(5);
+		expect(
+			events
+				.filter((e) => e.type === "text")
+				.map((e) => e.delta)
+				.join(""),
+		).toBe("Reading a.js.Done.");
+		expect(events.find((e) => e.type === "thinking").delta).toBe("Look first.");
+	});
+
+	it("does not echo OpenRouter-style reasoning back as reasoning_content", async () => {
+		const { fetch } = scriptedFetch([
+			sseResponse([
+				delta({ reasoning: "thinking..." }),
+				delta({
+					tool_calls: [
+						{
+							index: 0,
+							id: "c1",
+							function: { name: "list_files", arguments: "{}" },
+						},
+					],
+				}),
+				delta({}, "tool_calls"),
+			]),
+			sseResponse([delta({ content: "ok" }, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://openrouter.ai/api/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+		});
+		const messages = userTurn(adapter);
+		const events = [];
+		await adapter.runTurn({
+			system: "s",
+			messages,
+			executeTool: async () => "a.js",
+			onEvent: (e) => events.push(e),
+		});
+		expect(messages[1]).not.toHaveProperty("reasoning_content");
+		expect(events[0]).toEqual({ type: "thinking", delta: "thinking..." });
+	});
+
+	it("answers unparsable tool arguments with an error instead of running them", async () => {
+		const { fetch } = scriptedFetch([
+			sseResponse([
+				delta({
+					tool_calls: [
+						{
+							index: 0,
+							id: "c1",
+							function: { name: "write_file", arguments: "{bad" },
+						},
+					],
+				}),
+				delta({}, "tool_calls"),
+			]),
+			sseResponse([delta({ content: "Retrying." }, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+		});
+		const messages = userTurn(adapter);
+		const executeTool = vi.fn();
+		await adapter.runTurn({ system: "s", messages, executeTool });
+
+		expect(executeTool).not.toHaveBeenCalled();
+		expect(messages[2]).toEqual({
+			role: "tool",
+			tool_call_id: "c1",
+			content:
+				"Error: INVALID_JSON: the arguments for write_file were not valid JSON.",
+		});
+	});
+
+	it("never runs tool calls cut off by the length limit", async () => {
+		const { fetch } = scriptedFetch([
+			sseResponse([
+				delta({
+					tool_calls: [
+						{
+							index: 0,
+							id: "c1",
+							function: {
+								name: "write_file",
+								arguments: '{"path":"a.js","content":"x',
+							},
+						},
+					],
+				}),
+				delta({}, "length"),
+			]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+		});
+		const messages = userTurn(adapter);
+		const events = [];
+		const executeTool = vi.fn();
+		await adapter.runTurn({
+			system: "s",
+			messages,
+			executeTool,
+			onEvent: (e) => events.push(e),
+		});
+		expect(executeTool).not.toHaveBeenCalled();
+		expect(messages).toHaveLength(1);
+		expect(events.at(-1)).toEqual({ type: "truncated" });
+	});
+
+	it("reports API errors with the provider's message", async () => {
+		const { fetch } = scriptedFetch([
+			new Response(JSON.stringify({ error: { message: "Model Not Exist" } }), {
+				status: 400,
+			}),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "nope",
+			fetch,
+		});
+		const error = await adapter
+			.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+			})
+			.catch((e) => e);
+		expect(error).toBeInstanceOf(ProviderError);
+		expect(error.status).toBe(400);
+		expect(error.message).toBe("400: Model Not Exist");
+	});
+
+	it("falls back to native HTTP without streaming when fetch is blocked", async () => {
+		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
+		const nativePost = vi.fn(async () =>
+			JSON.stringify({
+				choices: [
+					{
+						message: {
+							role: "assistant",
+							content: "Hello from native.",
+						},
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			nativePost,
+		});
+		const messages = userTurn(adapter);
+		const events = [];
+		await adapter.runTurn({
+			system: "s",
+			messages,
+			executeTool: vi.fn(),
+			onEvent: (e) => events.push(e),
+		});
+		await adapter.runTurn({ system: "s", messages, executeTool: vi.fn() });
+
+		const [url, headers, body] = nativePost.mock.calls[0];
+		expect(url).toBe("https://x.test/v1/chat/completions");
+		expect(headers.Authorization).toBe("Bearer k");
+		expect(JSON.parse(body).stream).toBe(false);
+		expect(events[0]).toEqual({ type: "text", delta: "Hello from native." });
+		// Once blocked, later requests go straight to native HTTP.
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(nativePost).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not fall back when the user aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const nativePost = vi.fn();
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch: vi.fn(),
+			nativePost,
+		});
+		await expect(
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+				signal: controller.signal,
+			}),
+		).rejects.toThrow();
+		expect(nativePost).not.toHaveBeenCalled();
+	});
+
+	it("lists chat models, hiding embeddings and the like", async () => {
+		const { fetch } = scriptedFetch([
+			new Response(
+				JSON.stringify({
+					data: [
+						{ id: "models/gemini-pro-x" },
+						{ id: "text-embedding-4" },
+						{ id: "gpt-coder" },
+						{ id: "tts-2" },
+					],
+				}),
+			),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+		});
+		await expect(adapter.listModels()).resolves.toEqual([
+			"gemini-pro-x",
+			"gpt-coder",
+		]);
+	});
+
+	it("lists models through native HTTP when fetch is blocked", async () => {
+		const nativeGet = vi.fn(async () =>
+			JSON.stringify({ data: [{ id: "kimi" }] }),
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch: vi.fn(async () => {
+				throw new TypeError("Failed to fetch");
+			}),
+			nativeGet,
+		});
+		await expect(adapter.listModels()).resolves.toEqual(["kimi"]);
+		expect(nativeGet).toHaveBeenCalledWith("https://x.test/v1/models", {
+			Authorization: "Bearer k",
+		});
+	});
+});

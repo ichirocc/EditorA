@@ -97,28 +97,33 @@ async function pushedSession(repo, runTurn) {
 	let turn = 0;
 	const session = new AssistantSession({
 		github: repo.github,
-		claude: {},
-		model: "claude-opus-5-5",
 		owner: "o",
 		repo: "r",
 		baseBranch: "main",
 		now: () => new Date("2026-10-27T01:02:03Z"),
-		runTurn: async (options) => {
-			if (turn++ === 0) {
-				await options.executeTool("edit_file", {
-					path: "a.js",
-					old_string: "1\n",
-					new_string: "one\n",
-				});
-				await options.executeTool("write_file", {
-					path: "new.js",
-					content: "new\n",
-				});
-				await options.executeTool("delete_file", { path: "old.js" });
-				options.messages.push({ role: "assistant", content: [] });
-				return;
-			}
-			await runTurn?.(options);
+		ai: {
+			model: "test-model",
+			userMessage: (texts) => ({
+				role: "user",
+				content: texts.map((text) => ({ type: "text", text })),
+			}),
+			runTurn: async (options) => {
+				if (turn++ === 0) {
+					await options.executeTool("edit_file", {
+						path: "a.js",
+						old_string: "1\n",
+						new_string: "one\n",
+					});
+					await options.executeTool("write_file", {
+						path: "new.js",
+						content: "new\n",
+					});
+					await options.executeTool("delete_file", { path: "old.js" });
+					options.messages.push({ role: "assistant", content: [] });
+					return;
+				}
+				await runTurn?.(options);
+			},
 		},
 	});
 	await session.start();

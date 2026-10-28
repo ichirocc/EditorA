@@ -36,6 +36,18 @@ function fakeGitHub() {
 	};
 }
 
+/** A model adapter whose turns are scripted by the test. */
+function fakeAdapter(runTurn) {
+	return {
+		model: "test-model",
+		userMessage: (texts) => ({
+			role: "user",
+			content: texts.map((text) => ({ type: "text", text })),
+		}),
+		runTurn,
+	};
+}
+
 /** A runTurn stand-in that edits a.js through the real tool executor. */
 async function editingTurn({ messages, executeTool }) {
 	await executeTool("edit_file", {
@@ -49,12 +61,10 @@ async function editingTurn({ messages, executeTool }) {
 async function startedSession(github = fakeGitHub(), runTurn = editingTurn) {
 	const session = new AssistantSession({
 		github,
-		claude: {},
-		model: "claude-opus-5-5",
+		ai: fakeAdapter(runTurn),
 		owner: "o",
 		repo: "r",
 		baseBranch: "main",
-		runTurn,
 		now: () => new Date("2026-10-27T01:02:03Z"),
 	});
 	await session.start();

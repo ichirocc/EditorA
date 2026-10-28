@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { runAgentTurn } from "lib/aiAssistant/agent";
+import { createAnthropicAdapter, runAgentTurn } from "lib/aiAssistant/agent";
 import { ToolInputError } from "lib/aiAssistant/tools";
 import { describe, expect, it, vi } from "vitest";
 
@@ -244,5 +244,23 @@ describe("AI assistant agent loop", () => {
 			type: "tool_result",
 			tool_use_id: "t1",
 		});
+	});
+});
+
+describe("Anthropic adapter", () => {
+	it("builds user messages from text blocks and keeps a changeable model", () => {
+		const adapter = createAnthropicAdapter({
+			apiKey: "sk-ant",
+			model: "claude-opus-5-5",
+		});
+		expect(adapter.userMessage(["<app_state>", "hi"])).toEqual({
+			role: "user",
+			content: [
+				{ type: "text", text: "<app_state>" },
+				{ type: "text", text: "hi" },
+			],
+		});
+		adapter.model = "claude-sonnet-5-5";
+		expect(adapter.model).toBe("claude-sonnet-5-5");
 	});
 });
