@@ -1,8 +1,53 @@
 import { runAgentTurn } from "./agent";
 import ChangeSet from "./changeSet";
+import { hasConflictMarkers, merge3 } from "./merge3";
 import { evaluateMergeReadiness } from "./mergeGate";
-import { buildStateNote, buildSystemPrompt } from "./prompt";
+import {
+	buildCiFailureReport,
+	buildStateNote,
+	buildSystemPrompt,
+} from "./prompt";
 import { createToolExecutor } from "./tools";
+
+// GitHub lists at most 300 changed files in a comparison.
+const COMPARE_FILE_LIMIT = 300;
+const READ_CONCURRENCY = 6;
+
+/**
+ * Merges one file's two versions against their common ancestor.
+ * @param {string|null} ancestor null if the file did not exist
+ * @param {string|null} ours null if deleted on the work branch
+ * @param {string|null} theirs null if deleted on the base branch
+ * @param {{ours:string, theirs:string}} labels
+ * @returns {{content:string|null, conflict:boolean}}
+ */
+function mergeFile(ancestor, ours, theirs, labels) {
+	if (ours === theirs || ancestor === theirs) {
+		return { content: ours, conflict: false };
+	}
+	if (ancestor === ours) return { content: theirs, conflict: false };
+	if ([ancestor, ours, theirs].some((text) => text?.includes("\0"))) {
+		// Binary files cannot be merged line by line; keep the work branch's.
+		return { content: ours, conflict: false };
+	}
+	const merged = merge3(ancestor ?? "", ours ?? "", theirs ?? "", labels);
+	return { content: merged.text, conflict: merged.conflicts > 0 };
+}
+
+/**
+ * Runs `fn` over `items` with at most `limit` calls in flight.
+ * @template T
+ * @param {T[]} items
+ * @param {number} limit
+ * @param {(item:T) => Promise<void>} fn
+ */
+async function forEachLimited(items, limit, fn) {
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) await fn(items[next++]);
+	};
+	await Promise.all(Array.from({ length: limit }, worker));
+}
 
 /**
  * One briefing → edit → push → pull request → merge cycle against a
@@ -43,6 +88,13 @@ export default class AssistantSession {
 	changeSet = new ChangeSet();
 	/**@type {Set<string>} files committed to the work branch so far */
 	pushedPaths = new Set();
+	/**
+	 * Base branch being merged into the work branch. While set, `head` is the
+	 * base branch head, staged changes are relative to it, and the next push
+	 * creates a merge commit on top of `tip`.
+	 * @type {{tip:{commitSha:string, treeSha:string}, baseSha:string, conflicted:string[]}|null}
+	 */
+	merging = null;
 
 	/**
 	 * @param {object} options
@@ -77,7 +129,7 @@ export default class AssistantSession {
 		this.#executeTool = createToolExecutor({
 			changeSet: this.changeSet,
 			listBranchFiles: () => this.#listFiles(),
-			readBranchFile: (path) => this.#readFile(path),
+			readBranchFile: (path) => this.#readAt(path, this.head.commitSha),
 		});
 	}
 
@@ -91,10 +143,11 @@ export default class AssistantSession {
 	}
 
 	/**
-	 * @type {"briefing"|"editing"|"pushed"|"pr"|"merged"}
+	 * @type {"briefing"|"editing"|"pushed"|"pr"|"merging"|"merged"}
 	 */
 	get phase() {
 		if (this.pr?.merged) return "merged";
+		if (this.merging) return "merging";
 		if (this.pr) return "pr";
 		if (this.changeSet.size) return "editing";
 		if (this.workBranch) return "pushed";
@@ -121,6 +174,12 @@ export default class AssistantSession {
 			workBranch: this.workBranch,
 			stagedPaths: this.changeSet.list().map((change) => change.path),
 			pr: this.pr,
+			merge: this.merging
+				? {
+						baseBranch: this.baseBranch,
+						conflicted: this.unresolvedConflicts,
+					}
+				: null,
 		});
 		if (note !== this.#lastStateNote) {
 			content.push({ type: "text", text: note });
@@ -161,15 +220,39 @@ export default class AssistantSession {
 		return line.trim().slice(0, 72);
 	}
 
+	/** Files the base branch merge left with conflict markers. */
+	get unresolvedConflicts() {
+		if (!this.merging) return [];
+		return this.merging.conflicted.filter((path) =>
+			hasConflictMarkers(this.changeSet.get(path)?.content ?? null),
+		);
+	}
+
+	/** Commit message for the pending base branch merge. */
+	get mergeMessage() {
+		return `Merge branch '${this.baseBranch}' into ${this.workBranch}`;
+	}
+
 	/**
 	 * Commits all staged edits as one commit on the work branch, creating the
-	 * branch from the base head on the first push.
+	 * branch from the base head on the first push. While merging the base
+	 * branch, the commit is a merge commit and conflicts must be resolved.
 	 * @param {string} message commit message
 	 * @returns {Promise<string>} commit sha
 	 */
 	async push(message) {
-		if (!this.changeSet.size) throw new Error("There are no staged changes.");
+		if (!this.changeSet.size && !this.merging) {
+			throw new Error("There are no staged changes.");
+		}
 		if (this.pr?.merged) throw new Error("The pull request is already merged.");
+		const conflicts = this.unresolvedConflicts;
+		if (conflicts.length) {
+			const error = new Error(
+				`Resolve the conflicts first: ${conflicts.join(", ")}`,
+			);
+			error.conflicts = conflicts;
+			throw error;
+		}
 
 		if (!this.workBranch) {
 			const branch = this.#branchName();
@@ -184,17 +267,163 @@ export default class AssistantSession {
 
 		const commit = await this.#github.commitToBranch(this.owner, this.repo, {
 			branch: this.workBranch,
-			parentSha: this.head.commitSha,
-			parentTreeSha: this.head.treeSha,
+			parents: this.merging
+				? [this.merging.tip.commitSha, this.head.commitSha]
+				: [this.head.commitSha],
+			baseTreeSha: this.head.treeSha,
 			message,
 			entries: this.changeSet.toTreeEntries(),
 		});
 		this.head = commit;
-		for (const change of this.changeSet.list())
-			this.pushedPaths.add(change.path);
+		if (!this.merging) {
+			for (const change of this.changeSet.list()) {
+				this.pushedPaths.add(change.path);
+			}
+		}
+		this.merging = null;
 		this.changeSet.clear();
 		this.readiness = null;
 		return commit.commitSha;
+	}
+
+	/**
+	 * Merges the latest base branch into the work branch inside the app, to
+	 * fix a pull request that conflicts with or is behind the base branch.
+	 * Files only one side changed merge cleanly; files both sides changed on
+	 * the same lines get conflict markers for the assistant or the user to
+	 * resolve. The result is staged and committed by the next push.
+	 * @returns {Promise<{upToDate:boolean, conflicted:string[]}>}
+	 */
+	async syncWithBase() {
+		if (!this.workBranch) throw new Error("Push the changes first.");
+		if (this.merging) throw new Error("A merge is already in progress.");
+		if (this.changeSet.size) throw new Error("Push the staged changes first.");
+		if (this.pr?.merged) throw new Error("The pull request is already merged.");
+
+		const { owner, repo } = this;
+		const github = this.#github;
+		const tip = this.head;
+		const base = await github.getBranchHead(owner, repo, this.baseBranch);
+		const ours = await github.compare(
+			owner,
+			repo,
+			base.commitSha,
+			tip.commitSha,
+		);
+		if (ours.behind_by === 0) return { upToDate: true, conflicted: [] };
+
+		const mergeBase = ours.merge_base_commit.sha;
+		const oursFiles = ours.files || [];
+		if (oursFiles.length >= COMPARE_FILE_LIMIT) {
+			throw new Error("Too many changed files to merge in the app.");
+		}
+		const theirs = await github.compare(owner, repo, mergeBase, base.commitSha);
+		const theirsFiles = theirs.files || [];
+		const touchedOnBase = new Set(
+			theirsFiles.flatMap((file) => [file.filename, file.previous_filename]),
+		);
+		// A truncated list cannot rule a file out, so merge every file then.
+		const baseListComplete = theirsFiles.length < COMPARE_FILE_LIMIT;
+
+		/**@type {Map<string, boolean>} path → deleted on the work branch */
+		const paths = new Map();
+		for (const file of oursFiles) {
+			if (file.status === "renamed" && file.previous_filename) {
+				paths.set(file.previous_filename, true);
+			}
+			paths.set(file.filename, file.status === "removed");
+		}
+
+		const { files: tipFiles } = await github.listFiles(
+			owner,
+			repo,
+			tip.treeSha,
+		);
+		const modes = new Map(tipFiles.map((file) => [file.path, file.mode]));
+		const labels = { ours: this.workBranch, theirs: this.baseBranch };
+		const staged = new ChangeSet();
+		const conflicted = [];
+
+		await forEachLimited([...paths], READ_CONCURRENCY, async ([path, gone]) => {
+			const [mine, baseText] = await Promise.all([
+				gone ? null : this.#readAt(path, tip.commitSha),
+				this.#readAt(path, base.commitSha),
+			]);
+			let content = mine;
+			if (!baseListComplete || touchedOnBase.has(path)) {
+				const ancestor = await this.#readAt(path, mergeBase);
+				const merged = mergeFile(ancestor, mine, baseText, labels);
+				content = merged.content;
+				if (merged.conflict) conflicted.push(path);
+			}
+			if (content === null) {
+				if (baseText !== null) staged.delete(path, baseText);
+			} else {
+				staged.write(path, baseText, content, modes.get(path));
+			}
+		});
+
+		// Only commit to the new state once every read succeeded.
+		for (const change of staged.list()) {
+			if (change.content === null) {
+				this.changeSet.delete(change.path, change.original, change.mode);
+			} else {
+				this.changeSet.write(
+					change.path,
+					change.original,
+					change.content,
+					change.mode,
+				);
+			}
+		}
+		this.merging = {
+			tip,
+			baseSha: base.commitSha,
+			conflicted: conflicted.sort(),
+		};
+		this.head = base;
+		this.readiness = null;
+		return { upToDate: false, conflicted: this.merging.conflicted };
+	}
+
+	/** Drops a base branch merge that has not been pushed. */
+	abortMerge() {
+		if (!this.merging) return;
+		this.head = this.merging.tip;
+		this.merging = null;
+		this.changeSet.clear();
+		this.readiness = null;
+	}
+
+	/**
+	 * A report on the failed checks of the last status refresh for the
+	 * assistant: summaries, annotations and, for GitHub Actions jobs, the end
+	 * of the log. Details GitHub does not provide are left out.
+	 * @param {number} [limit=3] failed checks to describe
+	 * @returns {Promise<string>}
+	 */
+	async ciFailureReport(limit = 3) {
+		const { owner, repo } = this;
+		const failed = (this.readiness?.checks || [])
+			.filter((check) => check.state === "failure")
+			.slice(0, limit);
+		const details = await Promise.all(
+			failed.map(async (check) => ({
+				name: check.name,
+				summary: check.summary || "",
+				annotations: check.checkRunId
+					? await this.#github
+							.listCheckRunAnnotations(owner, repo, check.checkRunId)
+							.catch(() => [])
+					: [],
+				log: check.actions
+					? await this.#github
+							.getJobLogTail(owner, repo, check.checkRunId)
+							.catch(() => null)
+					: null,
+			})),
+		);
+		return buildCiFailureReport(details);
 	}
 
 	/**
@@ -232,7 +461,8 @@ export default class AssistantSession {
 		]);
 		this.pr = pr;
 		const readiness = evaluateMergeReadiness({ pr, checkRuns, combinedStatus });
-		if (!pr.merged && pr.head.sha !== this.head.commitSha) {
+		const tip = this.merging?.tip.commitSha ?? this.head.commitSha;
+		if (!pr.merged && pr.head.sha !== tip) {
 			// Someone else pushed to the branch: the user has not reviewed it.
 			readiness.blockers.push({ code: "head changed" });
 			readiness.ready = false;
@@ -290,14 +520,20 @@ export default class AssistantSession {
 		return this.#treeCache.get(treeSha);
 	}
 
-	#readFile(path) {
-		const key = `${this.head.commitSha}:${path}`;
+	/**
+	 * File content at a commit (cached; commits never change).
+	 * @param {string} path
+	 * @param {string} commitSha
+	 * @returns {Promise<string|null>}
+	 */
+	#readAt(path, commitSha) {
+		const key = `${commitSha}:${path}`;
 		if (!this.#fileCache.has(key)) {
 			const request = this.#github.readFile(
 				this.owner,
 				this.repo,
 				path,
-				this.head.commitSha,
+				commitSha,
 			);
 			request.catch(() => this.#fileCache.delete(key));
 			this.#fileCache.set(key, request);

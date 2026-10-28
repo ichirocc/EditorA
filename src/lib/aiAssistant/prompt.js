@@ -14,6 +14,7 @@ How this works:
 - Keep changes focused and match the surrounding code's style. Do not reformat code you were not asked to change.
 - A user message may start with an <app_state> block. The app writes it, not the user. It describes the work branch, staged edits and pull request; trust it over your memory (for example, a file the user reverted is no longer staged).
 - If the user reports failing CI checks, find and fix the cause with your tools; the user will push again.
+- When the app merges ${baseBranch} into the work branch, files both sides changed in the same place contain conflict markers (<<<<<<<, =======, >>>>>>>). Resolve each one so that both sides' intent is kept where possible and no markers remain.
 - The screen is small: keep replies short, show short snippets rather than whole files, and answer in the language the user writes in.`;
 }
 
@@ -23,9 +24,10 @@ How this works:
  * @param {string|null} state.workBranch
  * @param {string[]} state.stagedPaths
  * @param {{number:number, state:string, merged:boolean}|null} state.pr
+ * @param {{baseBranch:string, conflicted:string[]}|null} [state.merge]
  * @returns {string}
  */
-export function buildStateNote({ workBranch, stagedPaths, pr }) {
+export function buildStateNote({ workBranch, stagedPaths, pr, merge = null }) {
 	const lines = [
 		`Work branch: ${workBranch || "not created yet (created on first push)"}`,
 		`Staged, not yet pushed: ${stagedPaths.length ? stagedPaths.join(", ") : "nothing"}`,
@@ -33,5 +35,37 @@ export function buildStateNote({ workBranch, stagedPaths, pr }) {
 			pr ? `#${pr.number} (${pr.merged ? "merged" : pr.state})` : "none"
 		}`,
 	];
+	if (merge) {
+		lines.push(
+			`Merging ${merge.baseBranch} into the work branch; staged files are relative to the latest ${merge.baseBranch}.`,
+			`Unresolved conflict markers: ${
+				merge.conflicted.length ? merge.conflicted.join(", ") : "none"
+			}`,
+		);
+	}
 	return `<app_state>\n${lines.join("\n")}\n</app_state>`;
+}
+
+/**
+ * Failed CI checks described for the assistant.
+ * @param {{name:string, summary:string, annotations:any[], log:string|null}[]} details
+ * @returns {string}
+ */
+export function buildCiFailureReport(details) {
+	return details
+		.map(({ name, summary, annotations, log }) => {
+			const parts = [`### ${name}`];
+			if (summary) parts.push(summary);
+			const errors = annotations
+				.filter((note) => note.annotation_level !== "notice")
+				.slice(0, 20)
+				.map(
+					(note) =>
+						`- ${note.path}:${note.start_line} ${note.annotation_level}: ${note.message}`,
+				);
+			if (errors.length) parts.push(`Annotations:\n${errors.join("\n")}`);
+			if (log) parts.push(`End of the job log:\n\`\`\`\n${log}\n\`\`\``);
+			return parts.join("\n\n");
+		})
+		.join("\n\n");
 }

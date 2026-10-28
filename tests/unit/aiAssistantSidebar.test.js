@@ -3,7 +3,7 @@
 import tag from "html-tag-js";
 import * as diff from "lib/aiAssistant/diff";
 import AssistantSession from "lib/aiAssistant/session";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { loadSourceModule } from "../helpers/loadSourceModule.js";
 
 // The element helper html-tag-js installs in the app. Unlike the app's JSX
@@ -142,6 +142,7 @@ function loadApp({ settings, secretValues = {}, dialogs = {} }) {
 			},
 			"lib/aiAssistant/github": { createGitHubClient: () => github },
 			"lib/aiAssistant/agent": { createClaudeClient: () => claude },
+			"lib/aiAssistant/nativeHttp": { nativeGetText: vi.fn() },
 		},
 		{
 			tag,
@@ -169,18 +170,22 @@ const configured = {
 const keys = { anthropic_api_key: "sk-ant", github_token: "ghp" };
 
 /** Clicks the workflow button whose label is the given string key. */
-async function clickButton(container, label) {
+async function clickButton(container, label, settle = flush) {
 	const button = [...container.querySelectorAll(".workflow button")].find(
 		($button) => $button.textContent.trim() === label,
 	);
 	expect(button, label).toBeTruthy();
 	expect(button.disabled, `${label} disabled`).toBe(false);
 	button.click();
-	for (let i = 0; i < 5; i++) await flush();
+	for (let i = 0; i < 5; i++) await settle();
 }
 
 beforeEach(() => {
 	document.body.replaceChildren();
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 it("registers as a sidebar app and asks for setup first", () => {
@@ -340,4 +345,112 @@ it("saves settings without putting keys in the settings file", async () => {
 	expect(container.querySelector(".subtitle").textContent).toBe(
 		"me/proj · main",
 	);
+});
+
+it("merges the base branch in when the pull request conflicts", async () => {
+	const { container, github, mocks } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+	});
+	container.querySelector("textarea").value = "The answer should be 42";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+	await clickButton(container, "ai push");
+
+	// main changed the same line after the work branch was created.
+	const conflicting = {
+		...(await github.getPullRequest()),
+		mergeable: false,
+		mergeable_state: "dirty",
+	};
+	github.getPullRequest.mockResolvedValue(conflicting);
+	await clickButton(container, "ai create pr");
+	expect(container.querySelector(".reason").textContent).toBe(
+		"ai blocker conflict",
+	);
+
+	github.getBranchHead.mockResolvedValue({
+		commitSha: "main2",
+		treeSha: "tm2",
+	});
+	github.compare = vi.fn(async (_o, _r, from) =>
+		from === "main2"
+			? {
+					behind_by: 1,
+					merge_base_commit: { sha: "base" },
+					files: [{ filename: "src/app.js", status: "modified" }],
+				}
+			: { files: [{ filename: "src/app.js", status: "modified" }] },
+	);
+	github.readFile.mockImplementation(async (_o, _r, _path, ref) =>
+		ref === "c1"
+			? "const answer = 42;\n"
+			: ref === "main2"
+				? "const answer = 43;\n"
+				: "const answer = 41;\n",
+	);
+	await clickButton(container, "ai sync base");
+
+	expect(container.querySelector(".change").classList).toContain("conflict");
+	expect(
+		[...container.querySelectorAll(".workflow .reason")].map(($r) =>
+			$r.textContent.trim(),
+		),
+	).toEqual(["ai merge conflicts"]);
+	const push = [...container.querySelectorAll(".workflow button")].find(
+		($button) => $button.textContent.trim() === "ai push",
+	);
+	expect(push.disabled).toBe(true);
+	expect(
+		[...container.querySelectorAll(".workflow button")].some(
+			($button) =>
+				$button.textContent.trim() === "ai merge" && !$button.disabled,
+		),
+	).toBe(false);
+
+	// Cancelling drops the merge and nothing was committed for it.
+	await clickButton(container, "ai abort merge");
+	expect(container.querySelector(".changes").classList).toContain("hidden");
+	expect(github.commitToBranch).toHaveBeenCalledOnce();
+	expect(mocks.alert).not.toHaveBeenCalled();
+});
+
+it("keeps checking CI while it runs and reports the result", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+	const tick = () => vi.advanceTimersByTimeAsync(0);
+	const { container, github } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+	});
+	github.listCheckRuns.mockResolvedValue([
+		{ name: "build", status: "in_progress", conclusion: null },
+	]);
+	container.querySelector("textarea").value = "Fix";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await tick();
+	await clickButton(container, "ai push", tick);
+	await clickButton(container, "ai create pr", tick);
+	expect(github.listCheckRuns).toHaveBeenCalledTimes(1);
+	expect(container.querySelector(".reason").textContent).toBe(
+		"ai blocker ci running",
+	);
+
+	// Still running at the first poll; passing at the second (1.5x later).
+	await vi.advanceTimersByTimeAsync(15_000);
+	expect(github.listCheckRuns).toHaveBeenCalledTimes(2);
+	github.listCheckRuns.mockResolvedValue([
+		{ name: "build", status: "completed", conclusion: "success" },
+	]);
+	await vi.advanceTimersByTimeAsync(22_500);
+	expect(github.listCheckRuns).toHaveBeenCalledTimes(3);
+	expect(
+		[...container.querySelectorAll(".note.success")].map(
+			($n) => $n.textContent,
+		),
+	).toContain("ai ci passed");
+	expect(container.querySelector(".readiness").classList).toContain("ready");
+
+	// Nothing is pending any more, so polling stops.
+	await vi.advanceTimersByTimeAsync(120_000);
+	expect(github.listCheckRuns).toHaveBeenCalledTimes(3);
 });

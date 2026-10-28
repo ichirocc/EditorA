@@ -19,7 +19,8 @@ const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
  * @property {boolean} pending something is still running or being computed
  * @property {{code:BlockerCode, names?:string[]}[]} blockers reasons the merge is refused
  * @property {"no checks"[]} warnings things the user must acknowledge before merging
- * @property {{name:string, state:"success"|"pending"|"failure", summary?:string}[]} checks
+ * @property {{name:string, state:"success"|"pending"|"failure", summary?:string, checkRunId?:number, actions?:boolean}[]} checks
+ *   failed check runs carry their id; `actions` marks GitHub Actions jobs
  */
 
 /**
@@ -72,7 +73,13 @@ export function evaluateMergeReadiness({
 				.filter(Boolean)
 				.join("\n")
 				.slice(0, 2000);
-			checks.push({ name: run.name, state: "failure", summary });
+			checks.push({
+				name: run.name,
+				state: "failure",
+				summary,
+				checkRunId: run.id,
+				actions: run.app?.slug === "github-actions",
+			});
 		}
 	}
 	for (const status of combinedStatus?.statuses || []) {

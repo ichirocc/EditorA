@@ -44,10 +44,12 @@ Acode/
 
 The **AI assistant** sidebar app (chat bubble icon) edits a GitHub repository through a chat with Claude and merges the result only when you say so.
 
-1. Open the assistant's settings (gear icon) and enter the repository owner, name and base branch, an [Anthropic API key](https://platform.claude.com/), and a GitHub fine-grained personal access token limited to that repository with **Contents: read and write**, **Pull requests: read and write**, **Checks: read** and **Commit statuses: read** (add **Workflows: read and write** if the assistant should edit `.github/workflows`).
+1. Open the assistant's settings (gear icon) and enter the repository owner, name and base branch, an [Anthropic API key](https://platform.claude.com/), and a GitHub fine-grained personal access token limited to that repository with **Contents: read and write**, **Pull requests: read and write**, **Checks: read**, **Commit statuses: read** and **Actions: read** (for CI logs; add **Workflows: read and write** if the assistant should edit `.github/workflows`).
 2. Describe the change. The assistant reads the files it needs (from GitHub, at the base branch) and replies with a plan or stages edits. Staged edits are listed with a diff and can be reverted per file; nothing is sent to GitHub yet.
 3. **Push** commits all staged edits as one commit on a new `ai/edit-…` branch (later pushes add commits to the same branch). **Create PR** opens a pull request into the base branch.
-4. **Check status** shows CI results. **Merge** squash-merges only after a confirmation and only when the pull request has no conflicts, is not blocked by branch protection, every reported check has passed, and nobody else pushed to the branch. If CI fails, **Ask the assistant to fix** sends the failing checks back to the chat.
+4. CI results refresh on their own while checks run (**Check status** refreshes them at once). If CI fails, **Ask the assistant to fix** sends the failing checks, their annotations and the end of each GitHub Actions job log back to the chat.
+5. If the pull request conflicts with the base branch or is behind it, **Merge in main** (the base branch) merges it into the work branch inside the app. Changes to different lines merge cleanly; lines both sides changed get conflict markers, which the assistant resolves on request (**Ask the assistant to resolve**). The result is reviewed like any other change and pushed as a merge commit; **Cancel merge** drops it.
+6. **Merge** squash-merges only after a confirmation and only when the pull request has no conflicts, is not blocked by branch protection, every reported check has passed, and nobody else pushed to the branch. The app never merges on its own.
 
 Requests go directly from the app to `api.anthropic.com` (model `claude-opus-5-5` by default) and `api.github.com`. The key and token are stored in Android encrypted shared preferences, not in the settings file or its backups.
 

@@ -12,6 +12,9 @@ import appSettings from "lib/settings";
 import markdownIt from "markdown-it";
 
 const MAX_DIFF_LINES = 400;
+const WATCH_FIRST_DELAY = 15_000;
+const WATCH_MAX_DELAY = 60_000;
+const WATCH_MAX_POLLS = 60;
 const TOOL_ICONS = {
 	list_files: "folder",
 	read_file: "notes",
@@ -27,6 +30,8 @@ let session = null;
 let busy = false;
 /** @type {AbortController|null} */
 let abortController = null;
+/** @type {ReturnType<typeof setTimeout>|undefined} */
+let watchTimer;
 /** @type {Set<string>} paths whose diff is expanded */
 const expanded = new Set();
 
@@ -261,6 +266,7 @@ async function confirmDiscard() {
 }
 
 function resetSession() {
+	clearTimeout(watchTimer);
 	session = null;
 	expanded.clear();
 	$messages.content = "";
@@ -285,14 +291,19 @@ async function ensureSession() {
 		return null;
 	}
 
-	const [{ default: AssistantSession }, { createGitHubClient }, agent] =
-		await Promise.all([
-			import("lib/aiAssistant/session"),
-			import("lib/aiAssistant/github"),
-			import("lib/aiAssistant/agent"),
-		]);
+	const [
+		{ default: AssistantSession },
+		{ createGitHubClient },
+		agent,
+		{ nativeGetText },
+	] = await Promise.all([
+		import("lib/aiAssistant/session"),
+		import("lib/aiAssistant/github"),
+		import("lib/aiAssistant/agent"),
+		import("lib/aiAssistant/nativeHttp"),
+	]);
 	const created = new AssistantSession({
-		github: createGitHubClient({ token: githubToken }),
+		github: createGitHubClient({ token: githubToken, getText: nativeGetText }),
 		claude: agent.createClaudeClient(apiKey),
 		model,
 		owner,
@@ -322,8 +333,9 @@ function onSendClick() {
 
 /**
  * @param {string} [preset] message to send instead of the input's text
+ * @param {string} [display] shorter text to show in the chat for `preset`
  */
-async function send(preset) {
+async function send(preset, display) {
 	const text = (preset ?? $input.value).trim();
 	if (!text || busy) return;
 	// A merged session is finished; the next request starts a fresh one.
@@ -334,7 +346,7 @@ async function send(preset) {
 		$input.value = "";
 		autosize.update($input);
 	}
-	const $user = appendBubble("user", text);
+	const $user = appendBubble("user", display ?? text);
 
 	/** @type {HTMLElement|null} */
 	let $reply = null;
@@ -500,9 +512,11 @@ function renderChanges() {
 		</div>,
 	);
 
+	const conflicted = new Set(session.unresolvedConflicts);
 	for (const change of changes) {
 		const { added, removed } = diffStat(change.original, change.content);
 		const isOpen = expanded.has(change.path);
+		const hasConflict = conflicted.has(change.path);
 		const state =
 			change.original === null
 				? "added"
@@ -510,7 +524,7 @@ function renderChanges() {
 					? "deleted"
 					: "modified";
 		const $item = (
-			<div className={`change ${state}`}>
+			<div className={`change ${state} ${hasConflict ? "conflict" : ""}`}>
 				<div
 					className="change-header"
 					onclick={() => {
@@ -519,7 +533,9 @@ function renderChanges() {
 						renderChanges();
 					}}
 				>
-					<span className={`icon ${isOpen ? "expand_less" : "expand_more"}`} />
+					<span
+						className={`icon ${hasConflict ? "error" : isOpen ? "expand_less" : "expand_more"}`}
+					/>
 					<span className="path">{change.path}</span>
 					<span className="stat">
 						<span className="added">+{added}</span>
@@ -590,7 +606,8 @@ function renderActions() {
 	}
 	$actions.classList.remove("hidden");
 
-	const { pr, readiness, changeSet, workBranch } = session;
+	const { pr, readiness, changeSet, workBranch, merging } = session;
+	const conflicts = session.unresolvedConflicts;
 
 	if (pr) {
 		const $pr = (
@@ -612,14 +629,20 @@ function renderActions() {
 		$actions.append(<div className="pr-line">{workBranch}</div>);
 	}
 
-	if (readiness && !pr?.merged) {
+	if (merging) {
+		$actions.append(renderMerging(conflicts));
+	} else if (readiness && !pr?.merged) {
 		$actions.append(renderReadiness(readiness));
 	}
 
 	const buttons = [];
 	if (!pr?.merged) {
 		buttons.push(
-			<button type="button" disabled={busy || !changeSet.size} onclick={push}>
+			<button
+				type="button"
+				disabled={busy || conflicts.length > 0 || (!changeSet.size && !merging)}
+				onclick={push}
+			>
 				<span className="icon publish" />
 				{strings["ai push"]}
 			</button>,
@@ -646,7 +669,7 @@ function renderActions() {
 			<button
 				type="button"
 				className="merge"
-				disabled={busy || changeSet.size > 0}
+				disabled={busy || changeSet.size > 0 || !!merging}
 				onclick={merge}
 			>
 				<span className="icon check" />
@@ -667,6 +690,9 @@ function renderReadiness(readiness) {
 	const count = (state) =>
 		readiness.checks.filter((check) => check.state === state).length;
 	const failed = readiness.checks.filter((check) => check.state === "failure");
+	const needsBase = readiness.blockers.some(
+		({ code }) => code === "conflict" || code === "behind",
+	);
 	return (
 		<div className={`readiness ${readiness.ready ? "ready" : "blocked"}`}>
 			{readiness.checks.length ? (
@@ -697,6 +723,63 @@ function renderReadiness(readiness) {
 			) : (
 				""
 			)}
+			{needsBase ? (
+				<button
+					type="button"
+					className="fix"
+					disabled={busy}
+					onclick={syncWithBase}
+				>
+					<span className="icon git" />
+					{strings["ai sync base"].replace("{branch}", session.baseBranch)}
+				</button>
+			) : (
+				""
+			)}
+		</div>
+	);
+}
+
+/**
+ * Status of an unpushed merge of the base branch into the work branch.
+ * @param {string[]} conflicts files that still have conflict markers
+ * @returns {HTMLElement}
+ */
+function renderMerging(conflicts) {
+	const branch = session.baseBranch;
+	return (
+		<div className="readiness blocked">
+			<div className="ci">
+				{strings["ai merging base"].replace("{branch}", branch)}
+			</div>
+			{conflicts.length ? (
+				<div className="reason">
+					{strings["ai merge conflicts"].replace(
+						"{paths}",
+						conflicts.join(", "),
+					)}
+				</div>
+			) : (
+				""
+			)}
+			<div className="buttons">
+				{conflicts.length ? (
+					<button
+						type="button"
+						disabled={busy}
+						onclick={() => askToResolveConflicts(conflicts)}
+					>
+						<span className="icon wand" />
+						{strings["ai resolve conflicts"]}
+					</button>
+				) : (
+					""
+				)}
+				<button type="button" disabled={busy} onclick={abortMerge}>
+					<span className="icon clearclose" />
+					{strings["ai abort merge"]}
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -738,14 +821,67 @@ async function runStep(step) {
 	} finally {
 		setBusy(false);
 		render();
+		watchCi();
+	}
+}
+
+/**
+ * Re-checks the pull request while CI runs or GitHub computes mergeability,
+ * so the user does not have to keep tapping "Check status".
+ * @param {number} [delay]
+ * @param {number} [polls]
+ */
+function watchCi(delay = WATCH_FIRST_DELAY, polls = 0) {
+	clearTimeout(watchTimer);
+	const watched = session;
+	if (
+		!watched?.readiness?.pending ||
+		watched.pr?.merged ||
+		polls >= WATCH_MAX_POLLS
+	) {
+		return;
+	}
+	watchTimer = setTimeout(async () => {
+		if (session !== watched) return;
+		if (busy) {
+			watchCi(delay, polls);
+			return;
+		}
+		try {
+			const readiness = await watched.refreshStatus();
+			if (session !== watched) return;
+			if (!readiness.pending) announceCiResult(readiness);
+		} catch {
+			// Retried on the next poll.
+		}
+		renderActions();
+		watchCi(Math.min(delay * 1.5, WATCH_MAX_DELAY), polls + 1);
+	}, delay);
+}
+
+/**
+ * @param {import("lib/aiAssistant/mergeGate").MergeReadiness} readiness
+ */
+function announceCiResult(readiness) {
+	const failed = readiness.checks.filter((check) => check.state === "failure");
+	if (failed.length) {
+		note(
+			strings["ai blocker ci failed"].replace(
+				"{names}",
+				failed.map((check) => check.name).join(", "),
+			),
+			"error",
+		);
+	} else if (readiness.checks.length) {
+		note(strings["ai ci passed"], "success");
 	}
 }
 
 async function push() {
-	if (!session?.changeSet.size) return;
+	if (!session?.changeSet.size && !session?.merging) return;
 	const message = await prompt(
 		strings["commit message"],
-		session.briefTitle,
+		session.merging ? session.mergeMessage : session.briefTitle,
 		"textarea",
 		{ required: true },
 	);
@@ -830,16 +966,61 @@ async function merge() {
 }
 
 /**
- * @param {{name:string, summary?:string}[]} failed
+ * Sends the failed checks to the assistant with their annotations and log
+ * tails; the chat shows only the short request.
+ * @param {{name:string}[]} failed
  */
-function askToFixCi(failed) {
-	const details = failed
-		.map(({ name, summary }) => (summary ? `${name}:\n${summary}` : name))
-		.join("\n\n");
+async function askToFixCi(failed) {
+	if (busy || !session) return;
+	const request = strings["ai fix ci message"].replace(
+		"{names}",
+		failed.map((check) => check.name).join(", "),
+	);
+	let report = "";
+	setBusy(true);
+	try {
+		report = await session.ciFailureReport();
+	} catch {
+		// The request alone still lets the assistant investigate.
+	} finally {
+		setBusy(false);
+	}
+	send(report ? `${request}\n\n${report}` : request, request);
+}
+
+async function syncWithBase() {
+	await runStep(async () => {
+		const branch = session.baseBranch;
+		const { upToDate, conflicted } = await session.syncWithBase();
+		if (upToDate) {
+			note(strings["ai up to date"].replace("{branch}", branch));
+			return;
+		}
+		note(strings["ai merging base"].replace("{branch}", branch));
+		if (conflicted.length) {
+			note(
+				strings["ai merge conflicts"].replace("{paths}", conflicted.join(", ")),
+				"error",
+			);
+		}
+	});
+}
+
+function abortMerge() {
+	if (busy || !session?.merging) return;
+	session.abortMerge();
+	expanded.clear();
+	note(strings["ai merge aborted"].replace("{branch}", session.baseBranch));
+	render();
+}
+
+/**
+ * @param {string[]} conflicts
+ */
+function askToResolveConflicts(conflicts) {
 	send(
-		strings["ai fix ci message"].replace(
-			"{names}",
-			failed.map((check) => check.name).join(", "),
-		) + (details ? `\n\n${details}` : ""),
+		strings["ai resolve conflicts message"]
+			.replace("{branch}", session.baseBranch)
+			.replace("{paths}", conflicts.join(", ")),
 	);
 }

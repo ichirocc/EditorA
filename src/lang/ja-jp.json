@@ -931,5 +931,14 @@
 	"ai blocker ci running": "CIが実行中です: {names}",
 	"ai blocker head changed": "このセッション以外からブランチにコミットが追加されています。GitHub でプルリクエストを確認してください。",
 	"ai blocker unpushed": "先にステージ中の変更をプッシュしてください。",
-	"ai warning no checks": "このコミットにはCIチェックが報告されていません。CIがある場合、まだ開始されていない可能性があります。"
+	"ai warning no checks": "このコミットにはCIチェックが報告されていません。CIがある場合、まだ開始されていない可能性があります。",
+	"ai sync base": "{branch} を取り込む",
+	"ai merging base": "最新の {branch} をこのブランチに取り込み中です。変更を確認してプッシュすると完了します。",
+	"ai merge conflicts": "解消が必要なコンフリクト: {paths}",
+	"ai resolve conflicts": "AIに解消を依頼",
+	"ai resolve conflicts message": "{branch} の取り込みで次のファイルにコンフリクトが発生しました: {paths}。できるだけ両方の変更を活かして解消し、コンフリクトマーカーが残らないようにしてください。",
+	"ai abort merge": "取り込みを中止",
+	"ai merge aborted": "{branch} の取り込みを中止しました。",
+	"ai up to date": "ブランチはすでに最新の {branch} を含んでいます。",
+	"ai ci passed": "すべてのCIチェックが成功しました。"
 }

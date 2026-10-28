@@ -8,6 +8,8 @@
 
 const API_ROOT = "https://api.github.com";
 const API_VERSION = "2022-11-28";
+const LOG_TAIL_LINES = 120;
+const LOG_TAIL_CHARS = 6000;
 
 export class GitHubError extends Error {
 	/**
@@ -44,11 +46,32 @@ function decodeBase64Utf8(base64) {
 }
 
 /**
+ * Last lines of a GitHub Actions job log, without timestamps or colours.
+ * @param {string} log
+ * @returns {string}
+ */
+export function tailJobLog(log) {
+	const lines = log
+		.replace(/\x1b\[[0-9;]*m/g, "")
+		.split(/\r?\n/)
+		.map((line) => line.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, ""))
+		.filter((line) => line.trim());
+	return lines.slice(-LOG_TAIL_LINES).join("\n").slice(-LOG_TAIL_CHARS);
+}
+
+/**
  * @param {object} options
  * @param {string} options.token fine-grained or classic personal access token
  * @param {typeof fetch} [options.fetch]
+ * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.getText]
+ *   GET that follows redirects outside the WebView. Job logs redirect to
+ *   another host without CORS headers, so `fetch` cannot read them.
  */
-export function createGitHubClient({ token, fetch: fetchImpl = fetch }) {
+export function createGitHubClient({
+	token,
+	fetch: fetchImpl = fetch,
+	getText = null,
+}) {
 	/**
 	 * @param {string} method
 	 * @param {string} path API path starting with "/"
@@ -212,14 +235,16 @@ export function createGitHubClient({ token, fetch: fetchImpl = fetch }) {
 		},
 
 		/**
-		 * Commits tree entries on top of a branch head and fast-forwards the branch.
-		 * Fails (422) if the branch moved since `parentSha`.
+		 * Commits tree entries and fast-forwards the branch to the new commit.
+		 * The first parent must be the branch's current head; GitHub refuses
+		 * the update (422) if the branch moved. A second parent makes it a
+		 * merge commit.
 		 * @param {string} owner
 		 * @param {string} repo
 		 * @param {object} commit
 		 * @param {string} commit.branch
-		 * @param {string} commit.parentSha
-		 * @param {string} commit.parentTreeSha
+		 * @param {string[]} commit.parents
+		 * @param {string} commit.baseTreeSha tree the entries are applied to
 		 * @param {string} commit.message
 		 * @param {object[]} commit.entries tree entries (see ChangeSet#toTreeEntries)
 		 * @returns {Promise<{commitSha:string, treeSha:string}>}
@@ -227,17 +252,19 @@ export function createGitHubClient({ token, fetch: fetchImpl = fetch }) {
 		async commitToBranch(
 			owner,
 			repo,
-			{ branch, parentSha, parentTreeSha, message, entries },
+			{ branch, parents, baseTreeSha, message, entries },
 		) {
 			const base = repoPath(owner, repo);
-			const tree = await request("POST", `${base}/git/trees`, {
-				base_tree: parentTreeSha,
-				tree: entries,
-			});
+			const tree = entries.length
+				? await request("POST", `${base}/git/trees`, {
+						base_tree: baseTreeSha,
+						tree: entries,
+					})
+				: { sha: baseTreeSha };
 			const commit = await request("POST", `${base}/git/commits`, {
 				message,
 				tree: tree.sha,
-				parents: [parentSha],
+				parents,
 			});
 			await request("PATCH", `${base}/git/refs/heads/${encodePath(branch)}`, {
 				sha: commit.sha,
@@ -289,6 +316,56 @@ export function createGitHubClient({ token, fetch: fetchImpl = fetch }) {
 				`${repoPath(owner, repo)}/commits/${sha}/check-runs?per_page=100`,
 			);
 			return data.check_runs;
+		},
+
+		/**
+		 * Error lines a check run reported (file, line, message).
+		 * @param {string} owner
+		 * @param {string} repo
+		 * @param {number} checkRunId
+		 * @returns {Promise<{path:string, start_line:number, annotation_level:string, message:string, title?:string}[]>}
+		 */
+		listCheckRunAnnotations(owner, repo, checkRunId) {
+			return request(
+				"GET",
+				`${repoPath(owner, repo)}/check-runs/${checkRunId}/annotations?per_page=30`,
+			);
+		},
+
+		/**
+		 * Tail of a GitHub Actions job log (a check run's id is its job id).
+		 * Resolves null when logs cannot be read in this environment.
+		 * @param {string} owner
+		 * @param {string} repo
+		 * @param {number} jobId
+		 * @returns {Promise<string|null>}
+		 */
+		async getJobLogTail(owner, repo, jobId) {
+			if (!getText) return null;
+			const log = await getText(
+				`${API_ROOT}${repoPath(owner, repo)}/actions/jobs/${jobId}/logs`,
+				{
+					Accept: "application/vnd.github+json",
+					Authorization: `Bearer ${token}`,
+					"X-GitHub-Api-Version": API_VERSION,
+				},
+			);
+			return tailJobLog(log);
+		},
+
+		/**
+		 * Compares `base...head`: the merge base, how far each side moved, and
+		 * the files `head` changed since the merge base (up to 300).
+		 * @param {string} owner
+		 * @param {string} repo
+		 * @param {string} base
+		 * @param {string} head
+		 */
+		compare(owner, repo, base, head) {
+			return request(
+				"GET",
+				`${repoPath(owner, repo)}/compare/${base}...${head}?per_page=1`,
+			);
 		},
 
 		/**

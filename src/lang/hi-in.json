@@ -931,5 +931,14 @@
 	"ai blocker ci running": "CI is still running: {names}",
 	"ai blocker head changed": "The branch has commits that were not pushed from this session. Review the pull request on GitHub.",
 	"ai blocker unpushed": "Push the staged changes first.",
-	"ai warning no checks": "No CI checks were reported for this commit. If the repository has CI, it may not have started yet."
+	"ai warning no checks": "No CI checks were reported for this commit. If the repository has CI, it may not have started yet.",
+	"ai sync base": "Merge in {branch}",
+	"ai merging base": "Merging the latest {branch} into this branch. Review the changes and push to finish.",
+	"ai merge conflicts": "Conflicts to resolve: {paths}",
+	"ai resolve conflicts": "Ask the assistant to resolve",
+	"ai resolve conflicts message": "Merging {branch} left conflicts in: {paths}. Resolve them so that both sides' changes are kept where possible and no conflict markers remain.",
+	"ai abort merge": "Cancel merge",
+	"ai merge aborted": "Cancelled merging {branch}.",
+	"ai up to date": "The branch already has the latest {branch}.",
+	"ai ci passed": "All CI checks passed."
 }

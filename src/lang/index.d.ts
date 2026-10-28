@@ -935,6 +935,15 @@ declare type LangStrings = {
 	"ai blocker head changed": string;
 	"ai blocker unpushed": string;
 	"ai warning no checks": string;
+	"ai sync base": string;
+	"ai merging base": string;
+	"ai merge conflicts": string;
+	"ai resolve conflicts": string;
+	"ai resolve conflicts message": string;
+	"ai abort merge": string;
+	"ai merge aborted": string;
+	"ai up to date": string;
+	"ai ci passed": string;
 };
 
 declare var strings: LangStrings;

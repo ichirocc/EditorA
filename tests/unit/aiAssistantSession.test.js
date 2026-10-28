@@ -80,8 +80,8 @@ describe("AI assistant session", () => {
 		);
 		expect(github.commitToBranch).toHaveBeenCalledWith("o", "r", {
 			branch: "ai/edit-20261027-010203",
-			parentSha: "base",
-			parentTreeSha: "tree0",
+			parents: ["base"],
+			baseTreeSha: "tree0",
 			message: "Change one to two",
 			entries: [
 				{ path: "a.js", mode: "100644", type: "blob", content: "two\n" },
@@ -129,8 +129,8 @@ describe("AI assistant session", () => {
 
 		expect(github.createBranch).toHaveBeenCalledTimes(1);
 		expect(github.commitToBranch.mock.calls[1][2]).toMatchObject({
-			parentSha: "c1",
-			parentTreeSha: "tree1",
+			parents: ["c1"],
+			baseTreeSha: "tree1",
 		});
 		expect([...session.pushedPaths]).toEqual(["a.js"]);
 	});

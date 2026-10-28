@@ -204,6 +204,10 @@
       text-decoration: line-through;
     }
 
+    .change.conflict .change-header {
+      color: var(--error-text-color);
+    }
+
     .added {
       color: rgb(46, 160, 67);
     }
