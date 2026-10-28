@@ -45,6 +45,7 @@
 			"src/lang/**/*.json",
 			"tests/**",
 			"ai-assistant/**/*.js",
+			"ai-assistant/**/*.mjs",
 			"ai-assistant/**/*.json",
 			"!ai-assistant/node_modules/**",
 			"!src/plugins/**/*.js",

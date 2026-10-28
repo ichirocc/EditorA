@@ -10,7 +10,8 @@
 	},
 	"scripts": {
 		"start": "node server/server.js",
-		"test": "vitest run"
+		"test": "vitest run",
+		"check:providers": "node scripts/check-providers.mjs"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^1.3.0"

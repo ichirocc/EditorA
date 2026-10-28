@@ -79,6 +79,8 @@ async function* readEvents(body) {
  * @property {string} reasoning
  * @property {boolean} reasoningContent the reasoning came as `reasoning_content`
  * @property {{id:string, name:string, arguments:string}[]} toolCalls
+ * @property {Map<number, Reply["toolCalls"][number]>} slots the call each
+ *   stream index is adding to
  * @property {string|null} finish
  */
 
@@ -107,9 +109,15 @@ function addChunk(reply, chunk, onEvent) {
 		onEvent({ type: "thinking", delta: reasoning });
 	}
 	for (const call of delta.tool_calls || []) {
-		const index = call.index ?? reply.toolCalls.length;
-		reply.toolCalls[index] ??= { id: "", name: "", arguments: "" };
-		const slot = reply.toolCalls[index];
+		const key = call.index ?? -1;
+		let slot = reply.slots.get(key);
+		// A new id starts a new call, also where an API numbers every call 0
+		// or leaves the index out.
+		if (!slot || (call.id && slot.id && call.id !== slot.id)) {
+			slot = { id: "", name: "", arguments: "" };
+			reply.toolCalls.push(slot);
+			reply.slots.set(key, slot);
+		}
 		if (call.id) slot.id = call.id;
 		if (call.function?.name && !slot.name) slot.name = call.function.name;
 		if (call.function?.arguments) slot.arguments += call.function.arguments;
@@ -152,6 +160,7 @@ export function createOpenAICompatibleAdapter({
 			reasoning: "",
 			reasoningContent: false,
 			toolCalls: [],
+			slots: new Map(),
 			finish: null,
 		};
 		const url = `${root}/chat/completions`;
@@ -230,7 +239,7 @@ export function createOpenAICompatibleAdapter({
 					onEvent,
 					signal,
 				);
-				const calls = reply.toolCalls.filter(Boolean).map((call, i) => ({
+				const calls = reply.toolCalls.map((call, i) => ({
 					...call,
 					id: call.id || `call_${messages.length}_${i}`,
 				}));

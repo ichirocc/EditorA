@@ -169,6 +169,56 @@ describe("OpenAI-compatible adapter", () => {
 		expect(events.find((e) => e.type === "thinking").delta).toBe("Look first.");
 	});
 
+	it.each([
+		["numbers every call 0", (call) => ({ index: 0, ...call })],
+		["leaves the index out", (call) => call],
+	])("keeps parallel tool calls apart when an API %s", async (_name, shape) => {
+		const { fetch, bodies } = scriptedFetch([
+			sseResponse([
+				delta({
+					tool_calls: [
+						shape({
+							id: "call_a",
+							function: { name: "read_file", arguments: '{"path"' },
+						}),
+					],
+				}),
+				delta({ tool_calls: [shape({ function: { arguments: ':"a.js"}' } })] }),
+				delta({
+					tool_calls: [
+						shape({
+							id: "call_b",
+							function: { name: "list_files", arguments: "{}" },
+						}),
+					],
+				}),
+				delta({}, "tool_calls"),
+			]),
+			sseResponse([delta({ content: "Done." }), delta({}, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+			apiKey: "key",
+			model: "m",
+			fetch,
+		});
+		const executeTool = vi.fn(async () => "ok");
+
+		await adapter.runTurn({
+			system: "sys",
+			messages: userTurn(adapter),
+			executeTool,
+		});
+
+		expect(executeTool.mock.calls).toEqual([
+			["read_file", { path: "a.js" }],
+			["list_files", {}],
+		]);
+		expect(bodies[1].json.messages.slice(3).map((m) => m.tool_call_id)).toEqual(
+			["call_a", "call_b"],
+		);
+	});
+
 	it("does not echo OpenRouter-style reasoning back as reasoning_content", async () => {
 		const { fetch } = scriptedFetch([
 			sseResponse([

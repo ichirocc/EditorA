@@ -105,6 +105,21 @@ npm test
 
 The editor's CI runs the same tests from the repository root.
 
+### Check the AI providers with real API calls
+
+```sh
+AI_KEY_DEEPSEEK=… AI_KEY_GEMINI=… AI_MODEL_GEMINI=… npm run check:providers
+```
+
+For each provider whose key is set (same variable names as above), this
+loads the model list and runs two real turns on a one-file in-memory
+repository: the model must edit the file with its tools, then make a
+follow-up edit, which checks that the provider accepts the earlier tool
+calls and results. Nothing is sent to GitHub. Providers without a default
+model need `AI_MODEL_<PROVIDER>`; the output lists the available models.
+`--only deepseek,gemini` limits the run and `--json` prints the results as
+JSON. Each provider checked costs a few cents of API usage.
+
 ---
 
 ## クイックスタート（日本語）
@@ -120,6 +135,10 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
    「モデル一覧を取得」からモデルを選びます。リポジトリと GitHub トークンも入力します。
 4. 修正内容を指示 → 差分を確認 → **プッシュ** → **PRを作成** → CI が通ったら **マージ**。
    コンフリクト時は「main を取り込む」、CI 失敗時は「AIに修正を依頼」が使えます。
+
+各社の AI が実際に使えるかは、API キーを環境変数に設定して `npm run check:providers` で確認できます
+（例: `AI_KEY_DEEPSEEK=… npm run check:providers -- --only deepseek`）。モデル一覧の取得と、
+ツールでのファイル編集・続けての再編集を実際の API で行います。GitHub には何も送りません。
 
 API キーはサーバー側の `~/.editora-ai-assistant/config.json`（本人のみ読み取り可）に保存され、
 ブラウザには送られません。既定では同じ端末からしか接続できません。
