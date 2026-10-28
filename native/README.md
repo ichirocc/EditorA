@@ -16,7 +16,9 @@ the Cordova-based Acode build in this repository and does not share code with it
 
 ## Features
 
-Tabs, open/save/save as through the file picker, line numbers, syntax colouring
+A folder side panel (open a folder with the system picker, browse it, and
+create, rename or delete files and folders), tabs, open/save/save as through
+the file picker, line numbers, syntax colouring
 (JavaScript/TypeScript, JSON, CSS, Python, Kotlin/Java, C-family, shell/config,
 SQL, HTML/XML, Markdown), undo/redo that treats one IME conversion as one step,
 find and replace (case, whole word, regex), auto-indent, a row of code keys
@@ -29,7 +31,7 @@ Files must be UTF-8 (a BOM and CRLF line endings are kept) and at most 2 MB.
 
 | Path | Contents |
 | --- | --- |
-| `core/` | Platform-independent logic: lexer, undo history, search, file decoding. A separate Gradle build with JVM unit tests. |
+| `core/` | Platform-independent logic: lexer, undo history, search, file decoding, folder tree state. A separate Gradle build with JVM unit tests. |
 | `app/` | The Android app (activity, editor view, search bar, session storage). |
 
 ## Building

@@ -52,6 +52,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	private lateinit var scroll: ScrollView
 	private lateinit var editor: CodeEditText
 	private lateinit var statusView: TextView
+	private lateinit var folderPanel: FolderPanel
+	private lateinit var scrim: View
+	private var panelOpen = false
 
 	private val mainHandler = Handler(Looper.getMainLooper())
 	private val io: ExecutorService = Executors.newSingleThreadExecutor()
@@ -116,12 +119,16 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	// region UI
 
 	private fun buildUi() {
-		val root = LinearLayout(this).apply {
-			orientation = LinearLayout.VERTICAL
+		val root = FrameLayout(this).apply {
 			setBackgroundColor(themeColor(android.R.attr.colorBackground))
 		}
+		val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-		toolbar = Toolbar(this)
+		toolbar = Toolbar(this).apply {
+			setNavigationIcon(R.drawable.ic_menu)
+			navigationContentDescription = getString(R.string.nav_files)
+			setNavigationOnClickListener { if (panelOpen) closePanel() else openPanel() }
+		}
 		setActionBar(toolbar)
 
 		tabsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -154,12 +161,28 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 		val match = ViewGroup.LayoutParams.MATCH_PARENT
 		val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
-		root.addView(toolbar, LinearLayout.LayoutParams(match, wrap))
-		root.addView(tabsScroll, LinearLayout.LayoutParams(match, wrap))
-		root.addView(searchBar, LinearLayout.LayoutParams(match, wrap))
-		root.addView(scroll, LinearLayout.LayoutParams(match, 0, 1f))
-		root.addView(quickKeys(), LinearLayout.LayoutParams(match, wrap))
-		root.addView(statusView, LinearLayout.LayoutParams(match, wrap))
+		content.addView(toolbar, LinearLayout.LayoutParams(match, wrap))
+		content.addView(tabsScroll, LinearLayout.LayoutParams(match, wrap))
+		content.addView(searchBar, LinearLayout.LayoutParams(match, wrap))
+		content.addView(scroll, LinearLayout.LayoutParams(match, 0, 1f))
+		content.addView(quickKeys(), LinearLayout.LayoutParams(match, wrap))
+		content.addView(statusView, LinearLayout.LayoutParams(match, wrap))
+		root.addView(content, FrameLayout.LayoutParams(match, match))
+
+		scrim = View(this).apply {
+			setBackgroundColor(0x66000000)
+			visibility = View.GONE
+			setOnClickListener { closePanel() }
+		}
+		root.addView(scrim, FrameLayout.LayoutParams(match, match))
+
+		folderPanel = FolderPanel(this, io, folderHost).apply {
+			visibility = View.GONE
+			onExpansionChanged = { ids -> prefs.edit().putStringSet(KEY_TREE_EXPANDED, HashSet(ids)).apply() }
+		}
+		val panelWidth = minOf(dp(320), (resources.displayMetrics.widthPixels * 0.85f).toInt())
+		root.addView(folderPanel, FrameLayout.LayoutParams(panelWidth, match, Gravity.START))
+		restoreFolder()
 
 		// Android 15+ always draws edge to edge, so pad for the system bars and
 		// the keyboard ourselves. On older versions these insets are zero.
@@ -185,6 +208,96 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			}
 		}
 		setContentView(root)
+	}
+
+	private val folderHost = object : FolderPanel.Host {
+		override fun onOpenFile(uri: Uri) {
+			closePanel()
+			openUri(uri, persist = false)
+		}
+
+		override fun onPickFolder() {
+			startPicker(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_OPEN_FOLDER)
+		}
+
+		override fun onFileRenamed(oldUri: Uri, newUri: Uri, newName: String) {
+			val doc = documents.firstOrNull { it.uri == oldUri } ?: return
+			doc.uri = newUri
+			doc.name = newName
+			if (doc.language == Languages.PLAIN) {
+				doc.language = Languages.forFileName(newName)
+				if (doc === current) editor.language = doc.language
+			}
+			renderTabs()
+			updateStatus()
+		}
+
+		override fun onFileDeleted(uri: Uri) {
+			val doc = documents.firstOrNull { it.uri == uri } ?: return
+			if (doc.dirty) {
+				// Keep the unsaved text; saving will ask for a new location.
+				doc.uri = null
+				renderTabs()
+			} else {
+				removeDocument(doc)
+			}
+		}
+
+		override fun showMessage(message: String) = toast(message)
+	}
+
+	/** Re-opens the last folder if its grant is still held. */
+	private fun restoreFolder() {
+		val uri = prefs.getString(KEY_TREE_URI, null)?.let(Uri::parse) ?: return
+		val granted = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+		if (granted) {
+			folderPanel.setFolder(uri, prefs.getStringSet(KEY_TREE_EXPANDED, emptySet()).orEmpty())
+		} else {
+			prefs.edit().remove(KEY_TREE_URI).remove(KEY_TREE_EXPANDED).apply()
+		}
+	}
+
+	private fun openFolder(uri: Uri) {
+		try {
+			contentResolver.takePersistableUriPermission(
+				uri,
+				Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+			)
+		} catch (e: SecurityException) {
+			toast(getString(R.string.operation_failed, e.message ?: uri.toString()))
+			return
+		}
+		prefs.edit().putString(KEY_TREE_URI, uri.toString()).remove(KEY_TREE_EXPANDED).apply()
+		folderPanel.setFolder(uri)
+		openPanel()
+	}
+
+	private fun openPanel() {
+		if (panelOpen) return
+		panelOpen = true
+		currentFocus?.let { focused ->
+			(getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+				.hideSoftInputFromWindow(focused.windowToken, 0)
+		}
+		scrim.visibility = View.VISIBLE
+		scrim.alpha = 0f
+		scrim.animate().alpha(1f).setDuration(PANEL_ANIMATION_MS).start()
+		folderPanel.visibility = View.VISIBLE
+		folderPanel.translationX = -folderPanel.layoutParams.width.toFloat()
+		folderPanel.animate().translationX(0f).setDuration(PANEL_ANIMATION_MS).start()
+		updateBackCallback()
+	}
+
+	private fun closePanel() {
+		if (!panelOpen) return
+		panelOpen = false
+		scrim.animate().alpha(0f).setDuration(PANEL_ANIMATION_MS).withEndAction { scrim.visibility = View.GONE }.start()
+		folderPanel.animate()
+			.translationX(-folderPanel.layoutParams.width.toFloat())
+			.setDuration(PANEL_ANIMATION_MS)
+			.withEndAction { if (!panelOpen) folderPanel.visibility = View.GONE }
+			.start()
+		updateBackCallback()
 	}
 
 	private fun quickKeys(): View {
@@ -541,6 +654,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		when (requestCode) {
 			REQUEST_OPEN -> openUri(uri, persist = true)
 			REQUEST_SAVE_AS -> completeSaveAs(uri)
+			REQUEST_OPEN_FOLDER -> openFolder(uri)
 		}
 	}
 
@@ -647,6 +761,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		menu.add(0, ID_OPEN, 4, R.string.menu_open).setIcon(R.drawable.ic_open)
 			.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
 		menu.add(0, ID_NEW, 5, R.string.menu_new)
+		menu.add(0, ID_OPEN_FOLDER, 5, R.string.menu_open_folder)
 		menu.add(0, ID_SAVE_AS, 6, R.string.menu_save_as)
 		menu.add(0, ID_CLOSE, 7, R.string.menu_close_tab)
 		val languages = menu.addSubMenu(0, ID_LANGUAGE, 8, R.string.menu_language)
@@ -680,6 +795,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			ID_FIND -> toggleSearch()
 			ID_OPEN -> openPicker()
 			ID_NEW -> newDocument()
+			ID_OPEN_FOLDER -> folderHost.onPickFolder()
 			ID_SAVE_AS -> current?.let { syncCurrent(); saveAs(it) }
 			ID_CLOSE -> current?.let(::closeDocument)
 			ID_FONT_LARGER -> changeFontSize(1f)
@@ -753,14 +869,25 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	// region Back navigation
 
+	/** Closes the topmost transient UI. Returns false when there was none. */
+	private fun handleBack(): Boolean {
+		when {
+			panelOpen -> closePanel()
+			searchBar.isShowing -> searchBar.hide()
+			else -> return false
+		}
+		return true
+	}
+
 	private fun updateBackCallback() {
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
 		val dispatcher = onBackInvokedDispatcher
-		if (searchBar.isShowing && backCallback == null) {
-			val callback = OnBackInvokedCallback { searchBar.hide() }
+		val needed = panelOpen || searchBar.isShowing
+		if (needed && backCallback == null) {
+			val callback = OnBackInvokedCallback { handleBack() }
 			dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
 			backCallback = callback
-		} else if (!searchBar.isShowing && backCallback != null) {
+		} else if (!needed && backCallback != null) {
 			dispatcher.unregisterOnBackInvokedCallback(backCallback as OnBackInvokedCallback)
 			backCallback = null
 		}
@@ -768,10 +895,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	@Deprecated("Used below Android 13 only")
 	override fun onBackPressed() {
-		if (searchBar.isShowing) {
-			searchBar.hide()
-			return
-		}
+		if (handleBack()) return
 		@Suppress("DEPRECATION")
 		super.onBackPressed()
 	}
@@ -780,7 +904,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 
 	private fun mimeTypeFor(name: String): String {
 		val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-		return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "text/plain"
+		return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
 	}
 
 	private fun themeColor(attr: Int): Int {
@@ -800,9 +924,13 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val KEY_SUGGESTIONS = "keyboardSuggestions"
 		const val KEY_PENDING_SAVE_AS = "pendingSaveAs"
 		const val KEY_CLOSE_AFTER_SAVE = "closeAfterSave"
+		const val KEY_TREE_URI = "treeUri"
+		const val KEY_TREE_EXPANDED = "treeExpanded"
+		const val PANEL_ANIMATION_MS = 180L
 
 		const val REQUEST_OPEN = 1
 		const val REQUEST_SAVE_AS = 2
+		const val REQUEST_OPEN_FOLDER = 3
 
 		const val ID_UNDO = 1
 		const val ID_REDO = 2
@@ -816,6 +944,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val ID_FONT_LARGER = 10
 		const val ID_FONT_SMALLER = 11
 		const val ID_SUGGESTIONS = 12
+		const val ID_OPEN_FOLDER = 13
 		const val GROUP_LANGUAGE = 100
 		const val ID_LANGUAGE_BASE = 1000
 

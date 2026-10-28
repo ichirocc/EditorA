@@ -44,4 +44,15 @@
     <string name="close">Close</string>
 
     <string name="status_format">Ln %1$d, Col %2$d · %3$s · %4$s</string>
+
+    <string name="menu_open_folder">Open folder</string>
+    <string name="nav_files">Files</string>
+    <string name="folder_none">No folder open.\nTap here to choose one.</string>
+    <string name="new_file">New file</string>
+    <string name="new_folder">New folder</string>
+    <string name="rename">Rename</string>
+    <string name="delete">Delete</string>
+    <string name="delete_confirm">Delete %1$s? This cannot be undone.</string>
+    <string name="name_hint">Name</string>
+    <string name="operation_failed">Failed: %1$s</string>
 </resources>

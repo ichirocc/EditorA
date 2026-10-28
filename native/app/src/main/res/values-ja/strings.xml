@@ -41,4 +41,15 @@
     <string name="close">閉じる</string>
 
     <string name="status_format">%1$d 行 %2$d 列 · %3$s · %4$s</string>
+
+    <string name="menu_open_folder">フォルダを開く</string>
+    <string name="nav_files">ファイル</string>
+    <string name="folder_none">フォルダが開かれていません。\nここをタップして選んでください。</string>
+    <string name="new_file">新規ファイル</string>
+    <string name="new_folder">新規フォルダ</string>
+    <string name="rename">名前を変更</string>
+    <string name="delete">削除</string>
+    <string name="delete_confirm">%1$s を削除しますか？元に戻せません。</string>
+    <string name="name_hint">名前</string>
+    <string name="operation_failed">失敗しました: %1$s</string>
 </resources>
