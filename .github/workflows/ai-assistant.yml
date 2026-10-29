@@ -1,0 +1,136 @@
+# Packages the standalone AI assistant in ai-assistant/ (Node.js server and
+# web UI) as a zip with its dependencies included. Unzip it on a PC or in
+# Termux and run `npm start`; no build step or npm install is needed.
+
+name: EditorA AI Assistant
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Also publish the package as a GitHub pre-release
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "ai-assistant/**"
+      - ".github/workflows/ai-assistant.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ai-assistant
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ai-assistant/package-lock.json
+
+      - name: Compute metadata
+        id: meta
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')-${GITHUB_SHA::7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=editora-ai-assistant-$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Tests
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: Package
+        env:
+          NAME: ${{ steps.meta.outputs.artifact_name }}
+        run: |
+          STAGE="$RUNNER_TEMP/$NAME"
+          mkdir -p "$STAGE"
+          cp -R core server web scripts package.json package-lock.json README.md "$STAGE/"
+          (cd "$STAGE" && npm ci --omit=dev --no-audit --no-fund)
+          mkdir -p dist
+          (cd "$RUNNER_TEMP" && zip -qr "$GITHUB_WORKSPACE/ai-assistant/dist/$NAME.zip" "$NAME")
+
+      - name: Verify package
+        env:
+          NAME: ${{ steps.meta.outputs.artifact_name }}
+        run: |
+          # Start the server from the unzipped package and load its state.
+          CHECK="$RUNNER_TEMP/check"
+          mkdir -p "$CHECK"
+          unzip -q "dist/$NAME.zip" -d "$CHECK"
+          cd "$CHECK/$NAME"
+          ASSISTANT_HOME="$RUNNER_TEMP/home" ASSISTANT_TOKEN=check PORT=8790 node server/server.js &
+          SERVER=$!
+          for _ in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer check" http://127.0.0.1:8790/api/state > state.json; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$SERVER"
+          node -e '
+            const state = JSON.parse(require("node:fs").readFileSync("state.json", "utf8"));
+            if (!state.providers?.length) throw new Error("The server returned no providers.");
+            console.log(`Server answered with ${state.providers.length} providers.`);
+          '
+          {
+            echo "## EditorA AI Assistant"
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            echo "| Version | ${{ steps.meta.outputs.version }} |"
+            echo "| Size | $(du -h "$GITHUB_WORKSPACE/ai-assistant/dist/$NAME.zip" | cut -f1) |"
+            echo "| SHA-256 | $(sha256sum "$GITHUB_WORKSPACE/ai-assistant/dist/$NAME.zip" | cut -d' ' -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: ai-assistant/dist/${{ steps.meta.outputs.artifact_name }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "ai-assistant-v$VERSION" ./*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "EditorA AI Assistant $VERSION" \
+            --notes "The standalone AI assistant (Node.js server and web UI) with its dependencies. Unzip, then run npm start in the folder. Built from $GITHUB_SHA."
+        working-directory: .
