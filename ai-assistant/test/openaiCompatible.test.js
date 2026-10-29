@@ -66,6 +66,27 @@ describe("OpenAI-compatible adapter", () => {
 			type: "function",
 			function: { parameters: { type: "object", required: ["path"] } },
 		});
+		// Gemini rejects object schemas without properties.
+		for (const tool of OPENAI_TOOLS) {
+			const { parameters } = tool.function;
+			expect(
+				Object.keys(parameters.properties).length,
+				tool.function.name,
+			).toBeGreaterThan(0);
+			expect(parameters.required ?? ["x"], tool.function.name).not.toEqual([]);
+		}
+		const status = OPENAI_TOOLS.find(
+			(tool) => tool.function.name === "get_pull_request_status",
+		);
+		expect(status.function.parameters).toEqual({
+			type: "object",
+			properties: {
+				reason: {
+					type: "string",
+					description: "Optional. Not used by the app.",
+				},
+			},
+		});
 	});
 
 	it("streams text and runs tool calls until the model stops", async () => {

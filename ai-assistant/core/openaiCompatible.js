@@ -37,10 +37,32 @@ function isChatModel(entry, id) {
 }
 
 /** The assistant's tools in Chat Completions format. */
+/**
+ * A tool's input schema for Chat Completions. Gemini rejects an object
+ * schema without properties (and one left out), so a tool that takes no
+ * input gets one optional property that the app ignores; empty `required`
+ * lists are left out too.
+ * @param {any} schema
+ */
+function chatParameters({ properties = {}, required = [], ...schema }) {
+	return {
+		...schema,
+		properties: Object.keys(properties).length
+			? properties
+			: {
+					reason: {
+						type: "string",
+						description: "Optional. Not used by the app.",
+					},
+				},
+		...(required.length ? { required } : {}),
+	};
+}
+
 export const OPENAI_TOOLS = TOOLS.map(
 	({ name, description, input_schema }) => ({
 		type: "function",
-		function: { name, description, parameters: input_schema },
+		function: { name, description, parameters: chatParameters(input_schema) },
 	}),
 );
 
