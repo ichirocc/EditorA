@@ -32,11 +32,15 @@ on:
       - "native/**"
       - ".github/workflows/native-apk.yml"
       - ".github/workflows/ai-assistant.yml"
-      # The standalone assistant's server, UI and tests are not part of the
-      # APK; ai-assistant/core is, so it still triggers a build.
+      # Only ai-assistant/core goes into the APK, read as ES modules because
+      # of ai-assistant/package.json; its dependencies come from the root
+      # package.json. The rest of the standalone assistant is not in the APK.
       - "ai-assistant/server/**"
       - "ai-assistant/web/**"
       - "ai-assistant/test/**"
+      - "ai-assistant/scripts/**"
+      - "ai-assistant/package-lock.json"
+      - "ai-assistant/vitest.config.js"
 
 permissions:
   contents: read
