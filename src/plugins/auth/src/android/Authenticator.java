@@ -32,6 +32,13 @@ public class Authenticator extends CordovaPlugin {
     private static final String KEY_PENDING_BASE_URL = "pending_login_base_url";
     private static final int AUTH_CONNECT_TIMEOUT_MS = 15_000;
     private static final int AUTH_READ_TIMEOUT_MS = 30_000;
+    // Credentials the AI assistant stores for the user. Kept in their own
+    // encrypted file with no plaintext fallback.
+    private static final String SECRETS_FILENAME = "acode_ai_secrets";
+    private static final String[] SECRET_NAMES = {
+        "anthropic_api_key",
+        "github_token"
+    };
     private static final String[] API_ORIGINS = {
         "https://acode.app"
     };
@@ -40,6 +47,7 @@ public class Authenticator extends CordovaPlugin {
         "https://dev.acode.app"
     };
     private EncryptedPreferenceManager prefManager;
+    private EncryptedPreferenceManager secretStore;
     private final Object loginCallbackLock = new Object();
     private volatile CallbackContext loginCallback;
 
@@ -86,6 +94,11 @@ public class Authenticator extends CordovaPlugin {
                 JSONObject options = args.optJSONObject(0);
                 startLogin(options != null ? options : new JSONObject(), callbackContext);
                 return true;
+            case "getSecret":
+            case "setSecret":
+            case "removeSecret":
+                handleSecret(action, args, callbackContext);
+                return true;
             default:
                 Log.w(TAG, "Attempted to call unknown action: " + action);
                 return false;
@@ -97,6 +110,52 @@ public class Authenticator extends CordovaPlugin {
         if (!handleAuthCallback(intent)) {
             super.onNewIntent(intent);
         }
+    }
+
+    private void handleSecret(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
+        String name = args.getString(0);
+        if (!isSecretName(name)) {
+            callbackContext.error("Unknown secret: " + name);
+            return;
+        }
+        String value = "setSecret".equals(action) ? args.getString(1) : null;
+
+        cordova.getThreadPool().execute(() -> {
+            try {
+                EncryptedPreferenceManager store = getSecretStore();
+                switch (action) {
+                    case "getSecret":
+                        callbackContext.success(store.getString(name, ""));
+                        break;
+                    case "setSecret":
+                        if (store.setStringSync(name, value)) callbackContext.success();
+                        else callbackContext.error("Failed to save secret");
+                        break;
+                    default:
+                        if (store.removeSync(name)) callbackContext.success();
+                        else callbackContext.error("Failed to remove secret");
+                        break;
+                }
+            } catch (Exception error) {
+                Log.e(TAG, "Secure storage unavailable", error);
+                callbackContext.error("Secure storage is unavailable on this device");
+            }
+        });
+    }
+
+    private synchronized EncryptedPreferenceManager getSecretStore() {
+        if (secretStore == null) {
+            secretStore = new EncryptedPreferenceManager(this.cordova.getContext(), SECRETS_FILENAME, false);
+        }
+        return secretStore;
+    }
+
+    private static boolean isSecretName(String name) {
+        for (String secretName : SECRET_NAMES) {
+            if (secretName.equals(name)) return true;
+        }
+        // API keys of the other AI providers: ai_key_<provider id>.
+        return name != null && name.matches("ai_key_[a-z0-9_]{1,32}");
     }
 
     private void startLogin(JSONObject options, CallbackContext callbackContext) {

@@ -21,13 +21,15 @@ export default defineConfig({
 		alias: srcAliases,
 	},
 	test: {
-		// Vitest unit tests live ONLY under `tests/`.
+		// Vitest unit tests live ONLY under `tests/` and, for the standalone AI
+		// assistant, `ai-assistant/test/`.
 		// `src/test/` is Acode's in-app runtime test harness: it runs on-device
 		// inside the WebView (launched from the app commands) and depends on
 		// cordova/editorManager globals, so it must never be collected here.
-		include: ["tests/**/*.test.{js,ts}"],
+		include: ["tests/**/*.test.{js,ts}", "ai-assistant/test/**/*.test.js"],
 		exclude: [
 			...configDefaults.exclude,
+			"ai-assistant/node_modules/**",
 			"src/test/**",
 			"www/**",
 			"platforms/**",

@@ -220,6 +220,13 @@ class Settings {
 			showShareButton: true,
 			appIcon: "default",
 			iconTheme: "builtin",
+			// API keys are not stored here; see lib/aiAssistant/secrets.
+			aiAssistant: {
+				model: "claude-opus-5-5",
+				owner: "",
+				repo: "",
+				baseBranch: "main",
+			},
 		};
 		this.value = structuredClone(this.#defaultSettings);
 	}
