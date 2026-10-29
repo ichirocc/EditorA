@@ -885,7 +885,7 @@
 	"unavailable": "unavailable",
 	"ai assistant": "AIアシスタント",
 	"ai settings": "AIアシスタントの設定",
-	"github token": "GitHubトークン（contents と pull requests の読み書き権限）",
+	"github token": "GitHubトークン",
 	"repository owner": "リポジトリの所有者",
 	"repository name": "リポジトリ名",
 	"base branch": "ベースブランチ",
@@ -949,5 +949,7 @@
 	"ai api key optional": "{provider} のAPIキー（任意。サーバーで必要な場合のみ）",
 	"ai confirm push": "AIが {count} 件のファイルを次のコミットメッセージでプッシュしようとしています:\n{message}",
 	"ai confirm pr": "AIが {branch} へのプルリクエストを作成しようとしています:\n{title}",
-	"ai confirm merge": "AIがマージしようとしています。"
+	"ai confirm merge": "AIがマージしようとしています。",
+	"ai setup missing": "まだ設定されていない項目があります:",
+	"ai setup missing item": "・{item}（⚙ →「{section}」）"
 }
