@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_PROVIDER_ID,
 	getProvider,
 	isAllowedBaseUrl,
 	PROVIDERS,
@@ -49,9 +50,11 @@ describe("AI assistant providers", () => {
 		}
 	});
 
-	it("falls back to Claude for an unknown id", () => {
+	it("starts with Gemini, which has a free tier, also for an unknown id", () => {
+		expect(DEFAULT_PROVIDER_ID).toBe("gemini");
+		expect(getProvider("gemini").defaultModel).toBe("gemini-flash-latest");
 		expect(getProvider("deepseek").label).toBe("DeepSeek");
-		expect(getProvider("gone").id).toBe("anthropic");
+		expect(getProvider("gone").id).toBe("gemini");
 	});
 
 	it("names each provider's key for the native allow-list", () => {

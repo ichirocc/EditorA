@@ -14,6 +14,7 @@ import markdownIt from "markdown-it";
 // The assistant's core is the standalone project in ai-assistant/.
 import { diffHunks, diffStat } from "../../../ai-assistant/core/diff.js";
 import {
+	DEFAULT_PROVIDER_ID,
 	getProvider,
 	isAllowedBaseUrl,
 	PROVIDERS,
@@ -144,14 +145,19 @@ function onSelected() {
 }
 
 function config() {
+	const saved = appSettings.value.aiAssistant || {};
+	const fallback = getProvider(DEFAULT_PROVIDER_ID);
 	return {
-		provider: "anthropic",
-		model: "claude-opus-5-5",
 		baseUrl: "",
 		owner: "",
 		repo: "",
 		baseBranch: "main",
-		...appSettings.value.aiAssistant,
+		...saved,
+		// Until the user picks a provider, use the default one with its model
+		// (earlier versions saved the default model without a provider).
+		...(saved.provider
+			? {}
+			: { provider: fallback.id, model: fallback.defaultModel }),
 	};
 }
 

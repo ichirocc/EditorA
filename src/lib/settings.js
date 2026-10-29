@@ -220,9 +220,9 @@ class Settings {
 			showShareButton: true,
 			appIcon: "default",
 			iconTheme: "builtin",
-			// API keys are not stored here; see lib/aiAssistant/secrets.
+			// API keys are not stored here (see lib/aiAssistant/secrets); the
+			// AI sidebar picks the default provider and model.
 			aiAssistant: {
-				model: "claude-opus-5-5",
 				owner: "",
 				repo: "",
 				baseBranch: "main",
