@@ -14,6 +14,27 @@ const MAX_ROUNDS = 60;
 // Model ids that are clearly not chat models, hidden from the model list.
 const NON_CHAT_MODEL =
 	/embed|tts|whisper|dall-e|image|audio|realtime|moderation|transcri|rerank|speech|vision-exp/i;
+// Model types (Together AI) other than chat; "language" is a base model.
+const NON_CHAT_TYPE =
+	/^(?:embedding|image|rerank|moderation|audio|video|transcribe|language)$/;
+
+/**
+ * Whether a `/models` entry can serve the assistant: a chat model and, where
+ * the API says (Hugging Face lists each model's providers), one that some
+ * provider runs with tool calling.
+ * @param {any} entry
+ * @param {string} id
+ */
+function isChatModel(entry, id) {
+	if (!id || NON_CHAT_MODEL.test(id)) return false;
+	if (typeof entry.type === "string" && NON_CHAT_TYPE.test(entry.type)) {
+		return false;
+	}
+	if (Array.isArray(entry.providers) && entry.providers.length) {
+		return entry.providers.some((provider) => provider?.supports_tools);
+	}
+	return true;
+}
 
 /** The assistant's tools in Chat Completions format. */
 export const OPENAI_TOOLS = TOOLS.map(
@@ -46,6 +67,20 @@ export function providerError(status, text) {
 	return new ProviderError(
 		`${status ? `${status}: ` : ""}${String(message || "Request failed").slice(0, 500)}`,
 		status,
+	);
+}
+
+/**
+ * The error for a request that never reached the API: fetch only says
+ * "fetch failed", which does not tell which server is down.
+ * @param {string} url
+ * @param {any} error
+ */
+function unreachable(url, error) {
+	const cause = error?.cause?.code || error?.cause?.message || error?.message;
+	return new ProviderError(
+		`Could not connect to ${new URL(url).host}${cause ? ` (${cause})` : ""}.`,
+		0,
 	);
 }
 
@@ -128,7 +163,7 @@ function addChunk(reply, chunk, onEvent) {
 /**
  * @param {object} options
  * @param {string} options.baseUrl API root, e.g. "https://api.deepseek.com"
- * @param {string} options.apiKey
+ * @param {string} [options.apiKey] empty for servers that need none
  * @param {string} options.model
  * @param {typeof fetch} [options.fetch]
  * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.nativeGet]
@@ -144,7 +179,8 @@ export function createOpenAICompatibleAdapter({
 	nativePost = null,
 }) {
 	const root = baseUrl.replace(/\/+$/, "");
-	const auth = { Authorization: `Bearer ${apiKey}` };
+	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
+	const auth = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 	let useNative = false;
 
 	/**
@@ -176,7 +212,8 @@ export function createOpenAICompatibleAdapter({
 					signal,
 				});
 			} catch (error) {
-				if (signal?.aborted || !nativePost) throw error;
+				if (signal?.aborted) throw error;
+				if (!nativePost) throw unreachable(url, error);
 				useNative = true;
 			}
 			if (response) {
@@ -317,15 +354,20 @@ export function createOpenAICompatibleAdapter({
 				text = await response.text();
 				if (!response.ok) throw providerError(response.status, text);
 			} catch (error) {
-				if (error instanceof ProviderError || !nativeGet) throw error;
+				if (error instanceof ProviderError) throw error;
+				if (!nativeGet) throw unreachable(url, error);
 				text = await nativeGet(url, auth);
 			}
 			const data = JSON.parse(text);
-			return (data.data || data.models || [])
-				.map((entry) =>
-					String(entry.id || entry.name || "").replace(/^models\//, ""),
-				)
-				.filter((id) => id && !NON_CHAT_MODEL.test(id))
+			// Together AI returns a bare array.
+			const entries = Array.isArray(data) ? data : data.data || data.models;
+			return (entries || [])
+				.map((entry) => ({
+					entry,
+					id: String(entry.id || entry.name || "").replace(/^models\//, ""),
+				}))
+				.filter(({ entry, id }) => isChatModel(entry, id))
+				.map(({ id }) => id)
 				.sort();
 		},
 	};

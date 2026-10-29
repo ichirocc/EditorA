@@ -237,6 +237,38 @@ describe("standalone assistant server", () => {
 		);
 	});
 
+	it("needs no API key for a model server on this device", async () => {
+		const missing = await call("POST", "/api/models", { provider: "groq" });
+		expect(missing.status).toBe(400);
+
+		const listed = await call("POST", "/api/models", { provider: "ollama" });
+		expect(listed.body.models).toEqual(["model-a", "model-b"]);
+		expect(createAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				baseUrl: "http://localhost:11434/v1",
+				apiKey: "",
+			}),
+		);
+
+		await configure({
+			settings: {
+				provider: "ollama",
+				baseUrl: "http://localhost:11434/v1",
+				model: "qwen3:8b",
+				owner: "o",
+				repo: "r",
+				baseBranch: "main",
+			},
+			apiKey: "",
+		});
+		const { status, events } = await chat("The answer should be 42");
+		expect(status).toBe(200);
+		expect(events.at(-1).type).toBe("done");
+		expect(createAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ model: "qwen3:8b", apiKey: "" }),
+		);
+	});
+
 	it("streams a turn, then pushes, opens a PR and merges the confirmed head", async () => {
 		await configure();
 		const { events } = await chat("The answer should be 42");

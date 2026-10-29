@@ -53,11 +53,35 @@ and open the printed link in the phone's browser.
 
 ### AI providers
 
-Anthropic Claude (default `claude-opus-5-5`), DeepSeek, OpenAI, Google Gemini,
-xAI Grok, Moonshot Kimi, Alibaba Qwen, Z.ai GLM, Mistral, OpenRouter, or any
-OpenAI-compatible API, including a model server on the same device at
-`http://localhost`. Model names change often, so the settings dialog loads
-the provider's current list (**Load models**); you can also type a name.
+- **AI companies**: Anthropic Claude (default `claude-opus-5-5`), DeepSeek,
+  OpenAI, Google Gemini, xAI Grok, Moonshot Kimi, Alibaba Qwen, Z.ai GLM,
+  Mistral.
+- **Open models, hosted**: OpenRouter, Hugging Face, Groq, Together AI,
+  Fireworks AI. They run open-weight models such as Llama, Qwen, gpt-oss,
+  DeepSeek, Kimi and GLM.
+- **Open models on this device**, no API key: Ollama, LM Studio, llama.cpp.
+- **Custom**: any other OpenAI-compatible API.
+
+Model names change often, so the settings dialog loads the provider's
+current list (**Load models**); you can also type a name. The assistant
+edits files through tool calls, so pick a model that supports them (Hugging
+Face's list only shows such models).
+
+#### Open models on this device
+
+Start the model server, then choose it in ⚙ and press **Load models**:
+
+| Server | Start it | Notes |
+| --- | --- | --- |
+| [Ollama](https://ollama.com) | `ollama serve`, then `ollama pull <model>` (in Termux: `pkg install ollama`) | Pick a model tagged *tools* on ollama.com. Ollama's default context of 4096 tokens is too small for the assistant's instructions and files; start it with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`. |
+| [LM Studio](https://lmstudio.ai) | Developer tab → start the server, or `lms server start` | |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | `llama-server -m model.gguf --jinja -c 32768` | `--jinja` turns on tool calling. |
+
+The default addresses are `http://localhost:11434/v1`, `http://localhost:1234/v1`
+and `http://localhost:8080/v1`; change the API base URL if yours differs.
+Only `http://localhost` and `http://127.0.0.1` are allowed without HTTPS.
+Small models often fail to follow the tool instructions; larger ones (tens of
+billions of parameters) work much better.
 
 ### GitHub token
 
@@ -133,6 +157,9 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
 2. 表示された `http://127.0.0.1:8787/#token=…` をブラウザで開きます。
 3. ⚙ から AI プロバイダー（Claude、DeepSeek、OpenAI、Gemini など）を選び、API キーを入れて
    「モデル一覧を取得」からモデルを選びます。リポジトリと GitHub トークンも入力します。
+   オープンモデル（Llama、Qwen、gpt-oss など）は Hugging Face・Groq・Together AI・Fireworks AI・
+   OpenRouter で使えるほか、Ollama・LM Studio・llama.cpp で端末上に動かせば API キーなしで使えます
+   （Ollama は `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` で起動し、ツール対応のモデルを選んでください）。
 4. 修正内容を指示 → 差分を確認 → **プッシュ** → **PRを作成** → CI が通ったら **マージ**。
    コンフリクト時は「main を取り込む」、CI 失敗時は「AIに修正を依頼」が使えます。
 

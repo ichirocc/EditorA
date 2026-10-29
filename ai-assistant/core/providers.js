@@ -5,6 +5,10 @@
  *
  * Model names change often, so only Anthropic and DeepSeek have a default;
  * the settings dialog lists the provider's current models from `/models`.
+ *
+ * Open-weight models (Llama, Qwen, gpt-oss, DeepSeek, Kimi, GLM, …) can be
+ * used through the services that host them, or run on the device itself
+ * with Ollama, LM Studio or llama.cpp, which need no API key.
  */
 
 /**
@@ -15,6 +19,10 @@
  * @property {string} [baseUrl] OpenAI-compatible API root
  * @property {string} [defaultModel]
  * @property {string} [secretName] encrypted-storage name of the API key
+ * @property {"vendor"|"hosted"|"local"|"other"} group how the settings
+ *   group the providers: a model maker's own API, a service hosting open
+ *   models, a model server on this device, or any other API
+ * @property {boolean} [keyOptional] works without an API key
  */
 
 /**@type {Provider[]} */
@@ -23,6 +31,7 @@ export const PROVIDERS = [
 		id: "anthropic",
 		label: "Anthropic Claude",
 		kind: "anthropic",
+		group: "vendor",
 		defaultModel: "claude-opus-5-5",
 		secretName: "anthropic_api_key",
 	},
@@ -30,6 +39,7 @@ export const PROVIDERS = [
 		id: "deepseek",
 		label: "DeepSeek",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.deepseek.com",
 		// DeepSeek's alias for its latest model.
 		defaultModel: "deepseek-flash",
@@ -38,51 +48,120 @@ export const PROVIDERS = [
 		id: "openai",
 		label: "OpenAI",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.openai.com/v1",
 	},
 	{
 		id: "gemini",
 		label: "Google Gemini",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
 	},
 	{
 		id: "xai",
 		label: "xAI Grok",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.x.ai/v1",
 	},
 	{
 		id: "moonshot",
 		label: "Moonshot Kimi",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.moonshot.ai/v1",
 	},
 	{
 		id: "qwen",
 		label: "Alibaba Qwen",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 	},
 	{
 		id: "zai",
 		label: "Z.ai GLM",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.z.ai/api/paas/v4",
 	},
 	{
 		id: "mistral",
 		label: "Mistral",
 		kind: "openai",
+		group: "vendor",
 		baseUrl: "https://api.mistral.ai/v1",
 	},
 	{
 		id: "openrouter",
 		label: "OpenRouter",
 		kind: "openai",
+		group: "hosted",
 		baseUrl: "https://openrouter.ai/api/v1",
 	},
-	{ id: "custom", label: "Custom", kind: "openai", baseUrl: "" },
+	{
+		id: "huggingface",
+		label: "Hugging Face",
+		kind: "openai",
+		group: "hosted",
+		// Routes each model to one of the inference providers serving it.
+		baseUrl: "https://router.huggingface.co/v1",
+	},
+	{
+		id: "groq",
+		label: "Groq",
+		kind: "openai",
+		group: "hosted",
+		baseUrl: "https://api.groq.com/openai/v1",
+	},
+	{
+		id: "together",
+		label: "Together AI",
+		kind: "openai",
+		group: "hosted",
+		baseUrl: "https://api.together.xyz/v1",
+	},
+	{
+		id: "fireworks",
+		label: "Fireworks AI",
+		kind: "openai",
+		group: "hosted",
+		baseUrl: "https://api.fireworks.ai/inference/v1",
+	},
+	{
+		id: "ollama",
+		label: "Ollama",
+		kind: "openai",
+		group: "local",
+		baseUrl: "http://localhost:11434/v1",
+		keyOptional: true,
+	},
+	{
+		id: "lmstudio",
+		label: "LM Studio",
+		kind: "openai",
+		group: "local",
+		baseUrl: "http://localhost:1234/v1",
+		keyOptional: true,
+	},
+	{
+		id: "llamacpp",
+		label: "llama.cpp",
+		kind: "openai",
+		group: "local",
+		// llama-server's default port.
+		baseUrl: "http://localhost:8080/v1",
+		keyOptional: true,
+	},
+	{
+		id: "custom",
+		label: "Custom",
+		kind: "openai",
+		group: "other",
+		baseUrl: "",
+		keyOptional: true,
+	},
 ];
 
 /**

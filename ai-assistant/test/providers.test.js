@@ -19,6 +19,13 @@ describe("AI assistant providers", () => {
 			"zai",
 			"mistral",
 			"openrouter",
+			"huggingface",
+			"groq",
+			"together",
+			"fireworks",
+			"ollama",
+			"lmstudio",
+			"llamacpp",
 			"custom",
 		]);
 		for (const provider of PROVIDERS) {
@@ -27,6 +34,18 @@ describe("AI assistant providers", () => {
 			if (provider.id !== "custom") {
 				expect(isAllowedBaseUrl(provider.baseUrl)).toBe(true);
 			}
+		}
+	});
+
+	it("groups the providers, and runs local model servers without a key", () => {
+		const groups = [...new Set(PROVIDERS.map((provider) => provider.group))];
+		// Members of a group are listed together.
+		expect(groups).toEqual(["vendor", "hosted", "local", "other"]);
+		for (const provider of PROVIDERS) {
+			const local = provider.group === "local";
+			expect(!!provider.keyOptional).toBe(local || provider.id === "custom");
+			if (local)
+				expect(provider.baseUrl).toMatch(/^http:\/\/localhost:\d+\/v1$/);
 		}
 	});
 

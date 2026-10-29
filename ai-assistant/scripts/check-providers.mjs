@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-import {
-	createModelAdapter,
-	PROVIDERS,
-	secretNameFor,
-} from "../core/providers.js";
 /**
  * Live check of the AI providers: for every provider whose API key is set,
  * load its model list, then run two real turns of the assistant's tool loop
@@ -16,7 +11,11 @@ import {
  *
  * Keys use the same names as the server: ANTHROPIC_API_KEY, AI_KEY_DEEPSEEK,
  * AI_KEY_OPENAI, AI_KEY_GEMINI, AI_KEY_XAI, AI_KEY_MOONSHOT, AI_KEY_QWEN,
- * AI_KEY_ZAI, AI_KEY_MISTRAL, AI_KEY_OPENROUTER, AI_KEY_CUSTOM.
+ * AI_KEY_ZAI, AI_KEY_MISTRAL, AI_KEY_OPENROUTER, AI_KEY_HUGGINGFACE,
+ * AI_KEY_GROQ, AI_KEY_TOGETHER, AI_KEY_FIREWORKS, AI_KEY_CUSTOM.
+ * Model servers on this device (Ollama, LM Studio, llama.cpp) need no key:
+ * select them with --only or AI_MODEL_<PROVIDER>, e.g.
+ *   npm run check:providers -- --only ollama
  * Pick a model with AI_MODEL_<PROVIDER> (required where the provider has no
  * default; the output lists the available ones). AI_BASE_URL_<PROVIDER>
  * overrides the API root (required for CUSTOM).
@@ -25,9 +24,16 @@ import {
  * Behind an HTTP proxy, run Node with NODE_USE_ENV_PROXY=1 (Node >= 22.21).
  * Each checked provider costs a few cents of API usage.
  */
+import {
+	createModelAdapter,
+	PROVIDERS,
+	secretNameFor,
+} from "../core/providers.js";
 import AssistantSession from "../core/session.js";
 
 const TURN_TIMEOUT_MS = 3 * 60_000;
+// Models on the device itself can be much slower.
+const LOCAL_TURN_TIMEOUT_MS = 15 * 60_000;
 const FILE = "hello.js";
 const ORIGINAL = "export function answer() {\n\treturn 41;\n}\n";
 
@@ -67,8 +73,15 @@ async function checkProvider(provider) {
 		seconds: 0,
 		error: "",
 	};
-	const apiKey = process.env[secretNameFor(provider).toUpperCase()];
-	if (!apiKey) return { ...result, skipped: "no key" };
+	const apiKey = process.env[secretNameFor(provider).toUpperCase()] || "";
+	const selected =
+		only?.includes(provider.id) || !!process.env[`AI_MODEL_${id}`];
+	if (!apiKey && !(provider.keyOptional && selected)) {
+		return {
+			...result,
+			skipped: provider.keyOptional ? `use --only ${provider.id}` : "no key",
+		};
+	}
 	const baseUrl = process.env[`AI_BASE_URL_${id}`] || provider.baseUrl;
 	if (provider.kind === "openai" && !baseUrl) {
 		return { ...result, skipped: `set AI_BASE_URL_${id}` };
@@ -117,7 +130,9 @@ async function checkProvider(provider) {
 		const turn = (text) =>
 			session.send(text, {
 				onEvent,
-				signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
+				signal: AbortSignal.timeout(
+					provider.group === "local" ? LOCAL_TURN_TIMEOUT_MS : TURN_TIMEOUT_MS,
+				),
 			});
 
 		await turn(
@@ -143,12 +158,7 @@ async function checkProvider(provider) {
 				`turn 2 did not stage the edit: ${JSON.stringify(second)}`,
 			);
 	} catch (error) {
-		let message = String(error?.message || error);
-		// Node's fetch only says "fetch failed" when it cannot connect.
-		if (error?.cause) {
-			message += ` (${new URL(baseUrl || "https://api.anthropic.com").host}: ${error.cause.message || error.cause.code})`;
-		}
-		result.error = message.slice(0, 300);
+		result.error = String(error?.message || error).slice(0, 300);
 	}
 	result.seconds = Math.round((Date.now() - started) / 100) / 10;
 	return result;

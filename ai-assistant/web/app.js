@@ -117,7 +117,7 @@ function isConfigured() {
 		settings.owner &&
 		settings.repo &&
 		settings.model &&
-		saved[keyName] &&
+		(saved[keyName] || provider?.keyOptional) &&
 		saved.github_token
 	);
 }
@@ -723,9 +723,20 @@ function watchCi(delay = WATCH_FIRST_DELAY, polls = 0) {
 function fillSettings() {
 	const { settings, providers, saved } = state;
 	const $provider = $("provider");
+	const groups = new Map();
+	for (const provider of providers) {
+		if (!groups.has(provider.group)) groups.set(provider.group, []);
+		groups.get(provider.group).push(provider);
+	}
 	$provider.replaceChildren(
-		...providers.map((provider) =>
-			h("option", { value: provider.id }, providerLabel(provider)),
+		...[...groups].map(([group, members]) =>
+			h(
+				"optgroup",
+				{ label: t(`group.${group}`) },
+				members.map((provider) =>
+					h("option", { value: provider.id }, providerLabel(provider)),
+				),
+			),
 		),
 	);
 	$provider.value = settings.provider;
@@ -762,7 +773,11 @@ function onProviderChange(userChanged = true) {
 	}
 	const keyName = provider.secretName || `ai_key_${provider.id}`;
 	$("apiKey").value = "";
-	$("apiKey").placeholder = saved[keyName] ? t("keySaved") : "";
+	$("apiKey").placeholder = saved[keyName]
+		? t("keySaved")
+		: provider.keyOptional
+			? t("keyOptional")
+			: "";
 }
 
 async function loadModels() {

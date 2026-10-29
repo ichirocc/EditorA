@@ -223,16 +223,19 @@ async function openModelSettings() {
 	const secretName = secretNameFor(provider);
 	const savedKey = await secrets.get(secretName).catch(() => "");
 	const sameProvider = providerId === current.provider;
+	const keyLabel = provider.keyOptional
+		? strings["ai api key optional"]
+		: strings["ai api key"];
 	const inputs = [
 		{
 			id: "apiKey",
 			placeholder: keepHint(
-				strings["ai api key"].replace("{provider}", providerLabel(provider)),
+				keyLabel.replace("{provider}", providerLabel(provider)),
 				!!savedKey,
 			),
 			type: "password",
 			sensitive: true,
-			required: !savedKey,
+			required: !savedKey && !provider.keyOptional,
 		},
 	];
 	if (provider.kind === "openai") {
@@ -442,7 +445,8 @@ async function ensureSession() {
 		secrets.get(secretNameFor(provider)),
 		secrets.get("github_token"),
 	]);
-	if (!owner || !repo || !model || !apiKey || !githubToken) {
+	const keyMissing = !apiKey && !provider.keyOptional;
+	if (!owner || !repo || !model || keyMissing || !githubToken) {
 		alert(strings["ai assistant"], strings["ai setup required"]);
 		return null;
 	}

@@ -464,6 +464,103 @@ describe("OpenAI-compatible adapter", () => {
 		]);
 	});
 
+	it("reads bare-array model lists and keeps only tool-capable chat models", async () => {
+		const list = async (body) => {
+			const { fetch } = scriptedFetch([new Response(JSON.stringify(body))]);
+			const adapter = createOpenAICompatibleAdapter({
+				baseUrl: "https://x.test/v1",
+				apiKey: "k",
+				model: "m",
+				fetch,
+			});
+			return adapter.listModels();
+		};
+
+		// Together AI
+		await expect(
+			list([
+				{ id: "Qwen/Qwen3-Coder", type: "chat" },
+				{ id: "meta-llama/Llama-Base", type: "language" },
+				{ id: "BAAI/bge-large", type: "embedding" },
+				{ id: "black-forest-labs/FLUX", type: "image" },
+			]),
+		).resolves.toEqual(["Qwen/Qwen3-Coder"]);
+		// Mistral's "type" says how the model was made, not what it does.
+		await expect(
+			list({ data: [{ id: "mistral-large-latest", type: "base" }] }),
+		).resolves.toEqual(["mistral-large-latest"]);
+		// Hugging Face lists the providers serving each model.
+		await expect(
+			list({
+				data: [
+					{
+						id: "openai/gpt-oss-120b",
+						providers: [
+							{ provider: "a", supports_tools: false },
+							{ provider: "b", supports_tools: true },
+						],
+					},
+					{
+						id: "some/chat-only",
+						providers: [{ provider: "a", supports_tools: false }],
+					},
+				],
+			}),
+		).resolves.toEqual(["openai/gpt-oss-120b"]);
+	});
+
+	it("sends no Authorization header without a key (local model servers)", async () => {
+		const { fetch, bodies } = scriptedFetch([
+			new Response(JSON.stringify({ data: [{ id: "qwen3:8b" }] })),
+			sseResponse([delta({ content: "Hi." }), delta({}, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "http://localhost:11434/v1",
+			apiKey: "",
+			model: "qwen3:8b",
+			fetch,
+		});
+
+		await expect(adapter.listModels()).resolves.toEqual(["qwen3:8b"]);
+		await adapter.runTurn({
+			system: "s",
+			messages: userTurn(adapter),
+			executeTool: vi.fn(),
+		});
+
+		expect(bodies.map((body) => body.url)).toEqual([
+			"http://localhost:11434/v1/models",
+			"http://localhost:11434/v1/chat/completions",
+		]);
+		for (const body of bodies) {
+			expect(body.headers).not.toHaveProperty("Authorization");
+		}
+	});
+
+	it("names the server it could not connect to", async () => {
+		const refused = new TypeError("fetch failed", {
+			cause: Object.assign(new Error("connect ECONNREFUSED"), {
+				code: "ECONNREFUSED",
+			}),
+		});
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "http://localhost:11434/v1",
+			model: "m",
+			fetch: vi.fn(async () => {
+				throw refused;
+			}),
+		});
+		const expected = "Could not connect to localhost:11434 (ECONNREFUSED).";
+		await expect(adapter.listModels()).rejects.toThrow(expected);
+		await expect(
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+			}),
+		).rejects.toThrow(expected);
+	});
+
 	it("lists models through native HTTP when fetch is blocked", async () => {
 		const nativeGet = vi.fn(async () =>
 			JSON.stringify({ data: [{ id: "kimi" }] }),

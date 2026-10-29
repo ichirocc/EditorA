@@ -954,6 +954,7 @@ declare type LangStrings = {
 	"ai model manual": string;
 	"ai models unavailable": string;
 	"ai blocker ci starting": string;
+	"ai api key optional": string;
 };
 
 declare var strings: LangStrings;

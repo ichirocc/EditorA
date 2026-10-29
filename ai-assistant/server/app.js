@@ -186,7 +186,7 @@ export function createAssistantApp({
 			!settings.owner ||
 			!settings.repo ||
 			!settings.model ||
-			!apiKey ||
+			(!apiKey && !provider.keyOptional) ||
 			!githubToken
 		) {
 			throw new HttpError(400, "Setup is incomplete.", { code: "setup" });
@@ -299,7 +299,9 @@ export function createAssistantApp({
 		const apiKey =
 			String(body.apiKey || "").trim() ||
 			(await store.secret(secretNameFor(provider)));
-		if (!apiKey) throw new HttpError(400, "Enter the API key first.");
+		if (!apiKey && !provider.keyOptional) {
+			throw new HttpError(400, "Enter the API key first.");
+		}
 		const adapter = await createAdapter({
 			provider,
 			model: provider.defaultModel || "",

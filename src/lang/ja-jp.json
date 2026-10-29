@@ -950,5 +950,6 @@
 	"ai choose model": "モデルを選択",
 	"ai model manual": "モデル名を入力…",
 	"ai models unavailable": "モデル一覧を取得できませんでした（{error}）。モデル名を入力してください。",
-	"ai blocker ci starting": "CIの開始を待っています…"
+	"ai blocker ci starting": "CIの開始を待っています…",
+	"ai api key optional": "{provider} のAPIキー（任意。サーバーで必要な場合のみ）"
 }

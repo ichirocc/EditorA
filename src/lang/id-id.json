@@ -950,5 +950,6 @@
 	"ai choose model": "Choose a model",
 	"ai model manual": "Enter a model name…",
 	"ai models unavailable": "Could not load the model list ({error}). Enter a model name.",
-	"ai blocker ci starting": "Waiting for CI to start…"
+	"ai blocker ci starting": "Waiting for CI to start…",
+	"ai api key optional": "{provider} API key (optional, only if your server asks for one)"
 }
