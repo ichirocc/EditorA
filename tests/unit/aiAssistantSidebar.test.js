@@ -249,7 +249,7 @@ it("registers as a sidebar app and starts on this project's repository", () => {
 		"ai assistant",
 	]);
 	expect(container.querySelector(".subtitle").textContent).toBe(
-		"ichirocc/EditorA · main · Google Gemini: gemini-flash-latest",
+		"ichirocc/EditorA · main · Google Gemini: gemini-3.5-flash",
 	);
 	expect(container.querySelector(".note").textContent).toBe(
 		"ai session started",
@@ -263,7 +263,7 @@ it("starts with Gemini until a provider is chosen", async () => {
 		settings: { model: "claude-opus-5-5", owner: "o", repo: "r" },
 	});
 	expect(container.querySelector(".subtitle").textContent).toBe(
-		"o/r · main · Google Gemini: gemini-flash-latest",
+		"o/r · main · Google Gemini: gemini-3.5-flash",
 	);
 });
 

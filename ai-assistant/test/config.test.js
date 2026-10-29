@@ -19,7 +19,7 @@ describe("assistant config store", () => {
 		const store = createConfigStore({ dir, env: {} });
 		expect(await store.settings()).toEqual({
 			provider: "gemini",
-			model: "gemini-flash-latest",
+			model: "gemini-3.5-flash",
 			baseUrl: "",
 			owner: "ichirocc",
 			repo: "EditorA",
