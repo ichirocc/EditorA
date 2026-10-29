@@ -21,6 +21,8 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ScrollView
 import editora.core.Edit
+import editora.core.EditOps
+import editora.core.EditResult
 import editora.core.Language
 import editora.core.LexerKind
 import editora.core.Languages
@@ -50,6 +52,9 @@ class CodeEditText(context: Context) : EditText(context) {
 		private set
 	var colors: SyntaxColors = SyntaxColors.forResources(resources)
 	var indentUnit = "    "
+
+	/** Insert the matching closer after ( [ { and quotes, and step over typed closers. */
+	var autoClose = true
 
 	var language: Language = Languages.PLAIN
 		set(value) {
@@ -105,6 +110,7 @@ class CodeEditText(context: Context) : EditText(context) {
 			if (!applyingHistory) {
 				history.record(Edit(start, pendingRemoved, s.subSequence(start, start + count).toString()))
 				maybeAutoIndent(s, start, before, count)
+				maybeAutoClose(s, start, before, count)
 			}
 			listener?.onContentEdited()
 		}
@@ -260,10 +266,32 @@ class CodeEditText(context: Context) : EditText(context) {
 
 	override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
 		if (keyCode == KeyEvent.KEYCODE_TAB && !event.isCtrlPressed && !event.isAltPressed) {
-			insertAtCursor(indentUnit)
+			val content = text ?: return true
+			when {
+				event.isShiftPressed -> applyEditResult(EditOps.outdent(content, selectionStart, selectionEnd, indentUnit))
+				selectionStart != selectionEnd -> applyEditResult(EditOps.indent(content, selectionStart, selectionEnd, indentUnit))
+				else -> insertAtCursor(indentUnit)
+			}
 			return true
 		}
+		// Alt+Up/Down is not a shortcut key combination, so route it explicitly.
+		if (event.isAltPressed && (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
+			if (listener?.onShortcut(keyCode, event) == true) return true
+		}
 		return super.onKeyDown(keyCode, event)
+	}
+
+	/** Applies a line command as one undo step and shows its resulting selection. */
+	fun applyEditResult(result: EditResult) {
+		val editable = text ?: return
+		val edit = result.edit
+		val end = (edit.start + edit.removed.length).coerceAtMost(editable.length)
+		if (edit.start > end) return
+		history.breakMerge()
+		editable.replace(edit.start, end, edit.inserted)
+		history.breakMerge()
+		val length = length()
+		setSelection(result.selectionStart.coerceIn(0, length), result.selectionEnd.coerceIn(0, length))
 	}
 
 	override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
@@ -414,6 +442,28 @@ class CodeEditText(context: Context) : EditText(context) {
 			val editable = text ?: return@post
 			if (start < editable.length && editable[start] == '\n' && selectionEnd == start + 1) {
 				editable.insert(start + 1, indent)
+			}
+		}
+	}
+
+	/** Pairs brackets and quotes for single typed characters (never during IME composition). */
+	private fun maybeAutoClose(s: CharSequence, start: Int, before: Int, count: Int) {
+		if (!autoClose || count != 1 || before != 0 || isComposing()) return
+		val typed = s[start]
+		val after = s.getOrNull(start + 1)
+		if (EditOps.shouldSkipCloser(typed, after)) {
+			mainHandler.post {
+				val editable = text ?: return@post
+				if (selectionEnd == start + 1 && editable.getOrNull(start + 1) == typed) editable.delete(start + 1, start + 2)
+			}
+			return
+		}
+		val closing = EditOps.autoCloseFor(typed, s.getOrNull(start - 1), after) ?: return
+		mainHandler.post {
+			val editable = text ?: return@post
+			if (selectionEnd == start + 1 && editable.getOrNull(start) == typed) {
+				editable.insert(start + 1, closing.toString())
+				setSelection(start + 1)
 			}
 		}
 	}

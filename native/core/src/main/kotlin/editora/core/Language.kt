@@ -149,11 +149,13 @@ object Languages {
 	val MARKUP = Language(
 		"markup", "HTML / XML", LexerKind.MARKUP,
 		extensions = setOf("html", "htm", "xhtml", "xml", "svg", "vue", "svelte", "xsl", "plist"),
+		blockComment = "<!--" to "-->",
 	)
 
 	val MARKDOWN = Language(
 		"markdown", "Markdown", LexerKind.MARKDOWN,
 		extensions = setOf("md", "markdown", "mdx"),
+		blockComment = "<!--" to "-->",
 	)
 
 	val ALL: List<Language> = listOf(

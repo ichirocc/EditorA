@@ -73,4 +73,13 @@
     <string name="searching">Searching… %1$d files</string>
     <string name="search_done">%1$d matches in %2$d files searched</string>
     <string name="search_limited">Stopped at %1$d matches</string>
+
+    <string name="menu_edit">Edit</string>
+    <string name="edit_toggle_comment">Toggle comment</string>
+    <string name="edit_indent">Indent</string>
+    <string name="edit_outdent">Outdent</string>
+    <string name="edit_duplicate">Duplicate line</string>
+    <string name="edit_move_up">Move line up</string>
+    <string name="edit_move_down">Move line down</string>
+    <string name="menu_auto_close">Auto-close brackets</string>
 </resources>

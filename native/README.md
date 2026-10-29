@@ -23,7 +23,9 @@ the file picker, line numbers, syntax colouring
 (JavaScript/TypeScript, JSON, CSS, Python, Kotlin/Java, C-family, shell/config,
 SQL, HTML/XML, Markdown), undo/redo that treats one IME conversion as one step,
 find and replace (case, whole word, regex), go to line, LF/CRLF switching,
-Markdown and HTML preview (sandboxed WebView: no network, no file access,
+line commands (toggle comment, indent/outdent, duplicate, move up/down),
+auto-closing brackets and quotes (single typed characters only, never during
+IME composition), Markdown and HTML preview (sandboxed WebView: no network, no file access,
 JavaScript off unless enabled for HTML), auto-indent, a row of code keys
 above the keyboard, hardware-keyboard shortcuts (Ctrl+S/Z/Y/F/O/N/W), and
 restore of open tabs, including unsaved text, after the app is closed.

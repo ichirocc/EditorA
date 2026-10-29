@@ -33,6 +33,8 @@ import android.widget.Toolbar
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import editora.core.DecodeResult
+import editora.core.EditOps
+import editora.core.EditResult
 import editora.core.EncodeResult
 import editora.core.Languages
 import editora.core.LineEnding
@@ -146,6 +148,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		editor = CodeEditText(this).apply {
 			setFontSizeSp(prefs.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SIZE))
 			if (prefs.getBoolean(KEY_SUGGESTIONS, false)) setSuggestionsEnabled(true)
+			autoClose = prefs.getBoolean(KEY_AUTO_CLOSE, true)
 			listener = this@MainActivity
 		}
 		scroll = ScrollView(this).apply {
@@ -326,6 +329,21 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		}
 	}
 
+	/** Runs a line command on the current selection as a single undo step. */
+	private fun runEditOp(op: (CharSequence, Int, Int) -> EditResult?) {
+		val text = editor.text ?: return
+		val start = editor.selectionStart.coerceAtLeast(0)
+		val end = editor.selectionEnd.coerceAtLeast(0)
+		val result = op(text, minOf(start, end), maxOf(start, end)) ?: return
+		editor.applyEditResult(result)
+		ensureCursorVisible()
+	}
+
+	private fun toggleComment() {
+		val language = current?.language ?: return
+		runEditOp { t, s, e -> EditOps.toggleComment(t, s, e, language) }
+	}
+
 	private fun openPreview() {
 		val doc = current ?: return
 		val markdown = doc.language == Languages.MARKDOWN
@@ -400,6 +418,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 				setOnClickListener {
 					when (key) {
 						"Tab" -> editor.insertAtCursor(editor.indentUnit)
+						"⇤" -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
+						"//" -> toggleComment()
 						"←" -> editor.moveCursor(-1)
 						"→" -> editor.moveCursor(1)
 						else -> editor.insertAtCursor(key)
@@ -891,6 +911,14 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		menu.add(0, ID_FONT_LARGER, 9, R.string.menu_font_larger)
 		menu.add(0, ID_FONT_SMALLER, 10, R.string.menu_font_smaller)
 		menu.add(0, ID_SUGGESTIONS, 11, R.string.menu_suggestions).isCheckable = true
+		menu.add(0, ID_AUTO_CLOSE, 12, R.string.menu_auto_close).isCheckable = true
+		val edit = menu.addSubMenu(0, ID_EDIT, 3, R.string.menu_edit)
+		edit.add(0, ID_TOGGLE_COMMENT, 0, R.string.edit_toggle_comment)
+		edit.add(0, ID_INDENT, 1, R.string.edit_indent)
+		edit.add(0, ID_OUTDENT, 2, R.string.edit_outdent)
+		edit.add(0, ID_DUPLICATE, 3, R.string.edit_duplicate)
+		edit.add(0, ID_MOVE_UP, 4, R.string.edit_move_up)
+		edit.add(0, ID_MOVE_DOWN, 5, R.string.edit_move_down)
 		return true
 	}
 
@@ -902,6 +930,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		val languageIndex = Languages.ALL.indexOf(current?.language ?: Languages.PLAIN)
 		menu.findItem(ID_LANGUAGE_BASE + languageIndex)?.isChecked = true
 		menu.findItem(ID_SUGGESTIONS)?.isChecked = prefs.getBoolean(KEY_SUGGESTIONS, false)
+		menu.findItem(ID_AUTO_CLOSE)?.isChecked = prefs.getBoolean(KEY_AUTO_CLOSE, true)
 		return true
 	}
 
@@ -933,6 +962,17 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			ID_CLOSE -> current?.let(::closeDocument)
 			ID_FONT_LARGER -> changeFontSize(1f)
 			ID_FONT_SMALLER -> changeFontSize(-1f)
+			ID_TOGGLE_COMMENT -> toggleComment()
+			ID_INDENT -> runEditOp { t, s, e -> EditOps.indent(t, s, e, editor.indentUnit) }
+			ID_OUTDENT -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
+			ID_DUPLICATE -> runEditOp(EditOps::duplicateLines)
+			ID_MOVE_UP -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = true) }
+			ID_MOVE_DOWN -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = false) }
+			ID_AUTO_CLOSE -> {
+				val enabled = !prefs.getBoolean(KEY_AUTO_CLOSE, true)
+				prefs.edit().putBoolean(KEY_AUTO_CLOSE, enabled).apply()
+				editor.autoClose = enabled
+			}
 			ID_SUGGESTIONS -> {
 				val enabled = !prefs.getBoolean(KEY_SUGGESTIONS, false)
 				prefs.edit().putBoolean(KEY_SUGGESTIONS, enabled).apply()
@@ -944,6 +984,14 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	}
 
 	override fun onShortcut(keyCode: Int, event: KeyEvent): Boolean {
+		if (event.isAltPressed && !event.isCtrlPressed) {
+			when (keyCode) {
+				KeyEvent.KEYCODE_DPAD_UP -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = true) }
+				KeyEvent.KEYCODE_DPAD_DOWN -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = false) }
+				else -> return false
+			}
+			return true
+		}
 		if (!event.isCtrlPressed) return false
 		when (keyCode) {
 			KeyEvent.KEYCODE_S -> current?.let { if (event.isShiftPressed) { syncCurrent(); saveAs(it) } else save(it) }
@@ -953,6 +1001,10 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			KeyEvent.KEYCODE_O -> openPicker()
 			KeyEvent.KEYCODE_N -> newDocument()
 			KeyEvent.KEYCODE_G -> promptGoToLine()
+			KeyEvent.KEYCODE_SLASH -> toggleComment()
+			KeyEvent.KEYCODE_D -> runEditOp(EditOps::duplicateLines)
+			KeyEvent.KEYCODE_RIGHT_BRACKET -> runEditOp { t, s, e -> EditOps.indent(t, s, e, editor.indentUnit) }
+			KeyEvent.KEYCODE_LEFT_BRACKET -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
 			KeyEvent.KEYCODE_P -> openPreview()
 			KeyEvent.KEYCODE_W -> current?.let(::closeDocument)
 			else -> return false
@@ -1125,6 +1177,7 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val DEFAULT_FONT_SIZE = 14f
 		const val KEY_FONT_SIZE = "fontSize"
 		const val KEY_SUGGESTIONS = "keyboardSuggestions"
+		const val KEY_AUTO_CLOSE = "autoClose"
 		const val KEY_PENDING_SAVE_AS = "pendingSaveAs"
 		const val KEY_CLOSE_AFTER_SAVE = "closeAfterSave"
 		const val KEY_TREE_URI = "treeUri"
@@ -1154,11 +1207,19 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		const val ID_LINE_ENDING = 17
 		const val GROUP_LINE_ENDING = 102
 		const val ID_LINE_ENDING_BASE = 3000
+		const val ID_EDIT = 18
+		const val ID_TOGGLE_COMMENT = 19
+		const val ID_INDENT = 20
+		const val ID_OUTDENT = 21
+		const val ID_DUPLICATE = 22
+		const val ID_MOVE_UP = 23
+		const val ID_MOVE_DOWN = 24
+		const val ID_AUTO_CLOSE = 25
 		const val GROUP_ENCODING = 101
 		const val ID_ENCODING_BASE = 2000
 		const val GROUP_LANGUAGE = 100
 		const val ID_LANGUAGE_BASE = 1000
 
-		val QUICK_KEYS = listOf("Tab", "←", "→", "{", "}", "(", ")", "[", "]", "<", ">", ";", "=", "\"", "'", "/", ":", "#")
+		val QUICK_KEYS = listOf("Tab", "⇤", "←", "→", "//", "{", "}", "(", ")", "[", "]", "<", ">", ";", "=", "\"", "'", "/", ":", "#")
 	}
 }
