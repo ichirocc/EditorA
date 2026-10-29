@@ -334,7 +334,6 @@ declare type LangStrings = {
 	"info-scroll-settings": string;
 	"info-animation": string;
 	"info-quicktoolstriggermode": string;
-	"info-checkForAppUpdates": string;
 	"info-quickTools": string;
 	"info-showHiddenFiles": string;
 	"info-listFiles": string;
@@ -494,8 +493,6 @@ declare type LangStrings = {
 	overview: string;
 	contributors: string;
 	"quicktools:hyphen": string;
-	"check for app updates": string;
-	"prompt update check consent message": string;
 	keywords: string;
 	author: string;
 	"filtered by": string;
@@ -824,8 +821,6 @@ declare type LangStrings = {
 	"enter plugin source": string;
 	"enter keywords": string;
 	"enter author name": string;
-	"update available": string;
-	"update available info": string;
 	"plugin updates": string;
 	"plugin updates singular": string;
 	"plugin updates plural": string;

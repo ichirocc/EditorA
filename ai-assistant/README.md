@@ -18,7 +18,7 @@ depend on it. The editor's AI sidebar uses the same `core/`.
 
 ## Run it
 
-Requires Node.js 20 or newer.
+Requires Node.js 22 or newer.
 
 ```sh
 cd ai-assistant
@@ -44,7 +44,7 @@ and open the printed link in the phone's browser.
 
 The **EditorA AI Assistant** pre-releases on GitHub carry
 `editora-ai-assistant-<version>.zip`, with the dependencies included, so it
-needs only Node.js 20 or newer (no npm):
+needs only Node.js 22 or newer (no npm):
 
 ```sh
 unzip editora-ai-assistant-<version>.zip
@@ -181,7 +181,7 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
 ボタン操作でプッシュ → プルリクエスト作成 → ベースブランチへのマージまで行うアプリです。
 エディタとは独立しており、エディタの AI サイドバーも同じ `core/` を使います。
 
-1. Node.js 20 以上で `cd ai-assistant && npm install && npm start` を実行します
+1. Node.js 22 以上で `cd ai-assistant && npm install && npm start` を実行します
    （Android では Termux で `pkg install nodejs git` の後に同じ手順）。
    GitHub のプレリリース「EditorA AI Assistant」の `editora-ai-assistant-<バージョン>.zip` を使う場合は、
    展開したフォルダで `node server/server.js` を実行するだけです（依存パッケージ同梱のため npm は不要）。

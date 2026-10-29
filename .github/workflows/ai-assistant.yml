@@ -172,5 +172,5 @@ jobs:
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "EditorA AI Assistant $VERSION" \
-            --notes "The standalone AI assistant (Node.js server and web UI) with its dependencies. Unzip it, then run node server/server.js in the folder (Node.js 20 or newer). Built from $GITHUB_SHA."
+            --notes "The standalone AI assistant (Node.js server and web UI) with its dependencies. Unzip it, then run node server/server.js in the folder (Node.js 22 or newer). Built from $GITHUB_SHA."
         working-directory: .
