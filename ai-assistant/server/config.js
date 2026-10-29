@@ -2,10 +2,11 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { DEFAULT_PROVIDER_ID, getProvider } from "../core/providers.js";
 
 const DEFAULT_SETTINGS = {
-	provider: "anthropic",
-	model: "claude-opus-5-5",
+	provider: DEFAULT_PROVIDER_ID,
+	model: getProvider(DEFAULT_PROVIDER_ID).defaultModel,
 	baseUrl: "",
 	owner: "",
 	repo: "",

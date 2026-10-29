@@ -206,6 +206,7 @@ function loadApp({
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const configured = {
+	provider: "anthropic",
 	model: "claude-opus-5-5",
 	owner: "o",
 	repo: "r",
@@ -245,6 +246,16 @@ it("registers as a sidebar app and asks for setup first", () => {
 		"ai setup required",
 	);
 	expect(container.querySelector(".workflow").classList).toContain("hidden");
+});
+
+it("starts with Gemini until a provider is chosen", async () => {
+	// Earlier versions saved the default Claude model without a provider.
+	const { container } = loadApp({
+		settings: { model: "claude-opus-5-5", owner: "o", repo: "r" },
+	});
+	expect(container.querySelector(".subtitle").textContent).toBe(
+		"o/r · main · Google Gemini: gemini-flash-latest",
+	);
 });
 
 it("does not start a session without credentials", async () => {

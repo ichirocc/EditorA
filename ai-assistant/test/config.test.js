@@ -15,11 +15,11 @@ afterEach(async () => {
 });
 
 describe("assistant config store", () => {
-	it("starts with Claude defaults and nothing saved", async () => {
+	it("starts with Gemini defaults and nothing saved", async () => {
 		const store = createConfigStore({ dir, env: {} });
 		expect(await store.settings()).toEqual({
-			provider: "anthropic",
-			model: "claude-opus-5-5",
+			provider: "gemini",
+			model: "gemini-flash-latest",
 			baseUrl: "",
 			owner: "",
 			repo: "",

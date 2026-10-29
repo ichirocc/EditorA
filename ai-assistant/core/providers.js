@@ -3,8 +3,9 @@
  * every other provider is reached through its OpenAI-compatible Chat
  * Completions API, so a new one only needs an entry here.
  *
- * Model names change often, so only Anthropic and DeepSeek have a default;
- * the settings dialog lists the provider's current models from `/models`.
+ * Model names change often, so only Anthropic, DeepSeek and Gemini have a
+ * default; the settings dialog lists the provider's current models from
+ * `/models`.
  *
  * Open-weight models (Llama, Qwen, gpt-oss, DeepSeek, Kimi, GLM, …) can be
  * used through the services that host them, or run on the device itself
@@ -57,6 +58,8 @@ export const PROVIDERS = [
 		kind: "openai",
 		group: "vendor",
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+		// Google's alias for its latest Flash model, which the free tier covers.
+		defaultModel: "gemini-flash-latest",
 	},
 	{
 		id: "xai",
@@ -165,11 +168,20 @@ export const PROVIDERS = [
 ];
 
 /**
+ * The provider a new setup starts with. Gemini has a free tier: an API key
+ * from Google AI Studio costs nothing, within daily limits.
+ */
+export const DEFAULT_PROVIDER_ID = "gemini";
+
+/**
  * @param {string} id
- * @returns {Provider}
+ * @returns {Provider} the default provider for an unknown id
  */
 export function getProvider(id) {
-	return PROVIDERS.find((provider) => provider.id === id) || PROVIDERS[0];
+	return (
+		PROVIDERS.find((provider) => provider.id === id) ||
+		PROVIDERS.find((provider) => provider.id === DEFAULT_PROVIDER_ID)
+	);
 }
 
 /**

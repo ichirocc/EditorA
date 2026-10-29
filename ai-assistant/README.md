@@ -69,14 +69,20 @@ editor) and `editora-ai-assistant-*.zip` (this assistant on its own).
 
 ### AI providers
 
-- **AI companies**: Anthropic Claude (default `claude-opus-5-5`), DeepSeek,
-  OpenAI, Google Gemini, xAI Grok, Moonshot Kimi, Alibaba Qwen, Z.ai GLM,
-  Mistral.
+- **AI companies**: Google Gemini (the default, model
+  `gemini-flash-latest`), Anthropic Claude (`claude-opus-5-5`), DeepSeek,
+  OpenAI, xAI Grok, Moonshot Kimi, Alibaba Qwen, Z.ai GLM, Mistral.
 - **Open models, hosted**: OpenRouter, Hugging Face, Groq, Together AI,
   Fireworks AI. They run open-weight models such as Llama, Qwen, gpt-oss,
   DeepSeek, Kimi and GLM.
 - **Open models on this device**, no API key: Ollama, LM Studio, llama.cpp.
 - **Custom**: any other OpenAI-compatible API.
+
+Gemini is the default because it has a free tier: create an API key at
+no cost in [Google AI Studio](https://aistudio.google.com/apikey). The free
+tier has daily limits, and Google may use what is sent on it (including the
+repository files the assistant reads) to improve its products; use a paid
+key, or a model on this device, for code that must stay private.
 
 Model names change often, so the settings dialog loads the provider's
 current list (**Load models**); you can also type a name. The assistant
@@ -182,6 +188,10 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
 2. 表示された `http://127.0.0.1:8787/#token=…` をブラウザで開きます。
 3. ⚙ から AI プロバイダー（Claude、DeepSeek、OpenAI、Gemini など）を選び、API キーを入れて
    「モデル一覧を取得」からモデルを選びます。リポジトリと GitHub トークンも入力します。
+   既定は無料枠のある Google Gemini（モデル `gemini-flash-latest`）で、API キーは
+   [Google AI Studio](https://aistudio.google.com/apikey) で無料で作れます。無料枠には 1 日の上限があり、
+   送った内容（AI が読んだファイルを含む）が Google の製品改善に使われることがあります。
+   公開したくないコードには、有料のキーか端末上のモデルを使ってください。
    オープンモデル（Llama、Qwen、gpt-oss など）は Hugging Face・Groq・Together AI・Fireworks AI・
    OpenRouter で使えるほか、Ollama・LM Studio・llama.cpp で端末上に動かせば API キーなしで使えます
    （Ollama は `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` で起動し、ツール対応のモデルを選んでください）。
