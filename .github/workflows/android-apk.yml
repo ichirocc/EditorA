@@ -1,4 +1,10 @@
-# Builds an installable APK of this ads-disabled fork.
+# Builds the Acode-based editor (ads disabled, with the AI assistant
+# sidebar) as an installable APK.
+#
+# The repository builds three things, named so they can be told apart:
+#   editora-acode-*.apk         this workflow (EditorA Acode APK)
+#   editora-native-*.apk        native-apk.yml (EditorA Native APK)
+#   editora-ai-assistant-*.zip  ai-assistant.yml (EditorA AI Assistant)
 #
 # Signing (recommended): set these repository secrets so every build is signed
 # with the same key and can be installed over the previous one.
@@ -9,7 +15,7 @@
 # Without them a debug APK is built. It is signed with a throwaway debug key
 # that changes on every run, so each new build must replace an uninstalled app.
 
-name: Android APK
+name: EditorA Acode APK
 
 on:
   workflow_dispatch:
@@ -25,11 +31,16 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
       - "native/**"
       - ".github/workflows/native-apk.yml"
-      # The standalone assistant's server, UI and tests are not part of the
-      # APK; ai-assistant/core is, so it still triggers a build.
+      - ".github/workflows/ai-assistant.yml"
+      # Only ai-assistant/core goes into the APK, read as ES modules because
+      # of ai-assistant/package.json; its dependencies come from the root
+      # package.json. The rest of the standalone assistant is not in the APK.
       - "ai-assistant/server/**"
       - "ai-assistant/web/**"
       - "ai-assistant/test/**"
+      - "ai-assistant/scripts/**"
+      - "ai-assistant/package-lock.json"
+      - "ai-assistant/vitest.config.js"
 
 permissions:
   contents: read
@@ -108,7 +119,7 @@ jobs:
           VERSION="$BASE_VERSION-noads.${GITHUB_SHA::7}"
           sed -i "0,/version=\"$BASE_VERSION\"/s//version=\"$VERSION\"/" config.xml
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=acode-noads-$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=editora-acode-$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
@@ -149,7 +160,7 @@ jobs:
           fi
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
           {
-            echo "## APK"
+            echo "## EditorA Acode APK"
             echo "| Key | Value |"
             echo "| --- | --- |"
             echo "| Version | ${{ steps.meta.outputs.version }} |"
@@ -181,9 +192,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          gh release create "v$VERSION" ./*.apk \
+          gh release create "acode-v$VERSION" ./*.apk \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "Acode (ads disabled) $VERSION" \
-            --notes "Ads-disabled build from $GITHUB_SHA."
+            --title "EditorA Acode edition $VERSION" \
+            --notes "The Acode-based editor with the AI assistant sidebar, ads disabled. Built from $GITHUB_SHA."

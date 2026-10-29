@@ -4,7 +4,7 @@
 # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD). Without
 # them a debug APK is built, signed with a throwaway key.
 
-name: Native APK
+name: EditorA Native APK
 
 on:
   workflow_dispatch:
@@ -104,7 +104,7 @@ jobs:
           fi
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
           {
-            echo "## Native APK"
+            echo "## EditorA Native APK"
             echo "| Key | Value |"
             echo "| --- | --- |"
             echo "| Version | ${{ steps.meta.outputs.version }} |"
@@ -141,6 +141,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "EditorA native $VERSION" \
+            --title "EditorA Native edition $VERSION" \
             --notes "Native editor build from $GITHUB_SHA."
         working-directory: .

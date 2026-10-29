@@ -40,6 +40,22 @@ cd EditorA/ai-assistant && npm install && npm start
 
 and open the printed link in the phone's browser.
 
+### From a release package
+
+The **EditorA AI Assistant** pre-releases on GitHub carry
+`editora-ai-assistant-<version>.zip`, with the dependencies included, so it
+needs only Node.js 20 or newer (no npm):
+
+```sh
+unzip editora-ai-assistant-<version>.zip
+cd editora-ai-assistant-<version>
+node server/server.js
+```
+
+The repository's three builds are named apart: `editora-acode-*.apk` (the
+Acode-based editor with the AI sidebar), `editora-native-*.apk` (the native
+editor) and `editora-ai-assistant-*.zip` (this assistant on its own).
+
 ### Settings
 
 | Variable | Default | Meaning |
@@ -161,6 +177,8 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
 
 1. Node.js 20 以上で `cd ai-assistant && npm install && npm start` を実行します
    （Android では Termux で `pkg install nodejs git` の後に同じ手順）。
+   GitHub のプレリリース「EditorA AI Assistant」の `editora-ai-assistant-<バージョン>.zip` を使う場合は、
+   展開したフォルダで `node server/server.js` を実行するだけです（依存パッケージ同梱のため npm は不要）。
 2. 表示された `http://127.0.0.1:8787/#token=…` をブラウザで開きます。
 3. ⚙ から AI プロバイダー（Claude、DeepSeek、OpenAI、Gemini など）を選び、API キーを入れて
    「モデル一覧を取得」からモデルを選びます。リポジトリと GitHub トークンも入力します。
