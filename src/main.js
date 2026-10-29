@@ -30,7 +30,6 @@ import tile from "components/tile";
 import toast from "components/toast";
 import { initIconTooltips } from "components/tooltip";
 import alert from "dialogs/alert";
-import confirm from "dialogs/confirm";
 import intentHandler, { processPendingIntents } from "handlers/intent";
 import keyboardHandler, { keydownState } from "handlers/keyboard";
 import quickToolsInit from "handlers/quickToolsInit";
@@ -66,7 +65,7 @@ import themes from "theme/list";
 import { initHighlighting } from "utils/codeHighlight";
 import { getEncoding, initEncodings } from "utils/encodings";
 import helpers from "utils/helpers";
-import { INSTALL_SOURCE_PLAY, isPlayStoreInstall } from "utils/installSource";
+import { INSTALL_SOURCE_PLAY } from "utils/installSource";
 import loadPolyFill from "utils/polyfill";
 import Url from "utils/Url";
 import $_fileMenu from "views/file-menu.hbs";
@@ -409,75 +408,8 @@ async function onDeviceReady() {
 		}, 500);
 	}
 
-	await promptUpdateCheckConsent();
-
-	// Check for app updates
-	if (
-		!isPlayStoreInstall() &&
-		settings.value.checkForAppUpdates &&
-		navigator.onLine
-	) {
-		cordova.plugin.http.sendRequest(
-			"https://api.github.com/repos/Acode-Foundation/Acode/releases/latest",
-			{
-				method: "GET",
-				responseType: "json",
-			},
-			(response) => {
-				const release = response.data;
-				// assuming version is in format v1.2.3
-				const versionFormat = /^v?(\d+(?:\.\d+)*)/;
-				const latestVersion = release.tag_name
-					.match(versionFormat)?.[1]
-					.split(".")
-					.map(Number);
-				const currentVersion = BuildInfo.version
-					.match(versionFormat)?.[1]
-					.split(".")
-					.map(Number);
-				if (!(latestVersion && currentVersion)) {
-					window.log(
-						"error",
-						"Failed to parse version while checking for updates.",
-					);
-					return;
-				}
-
-				let hasUpdate = false;
-				for (let i = 0; i < latestVersion.length; i++) {
-					const latest = latestVersion[i];
-					const current = currentVersion[i] || 0;
-					if (latest > current) {
-						hasUpdate = true;
-						break;
-					} else if (latest < current) {
-						break;
-					}
-				}
-
-				if (hasUpdate) {
-					acode.pushNotification(
-						strings["update available"],
-						strings["update available info"].replace(
-							/\{version\}/,
-							release.tag_name,
-						),
-						{
-							icon: "update",
-							type: "warning",
-							action: () => {
-								system.openInBrowser(release.html_url);
-							},
-						},
-					);
-				}
-			},
-			(err) => {
-				window.log("error", "Failed to check for updates");
-				window.log("error", err);
-			},
-		);
-	}
+	// This fork is built from its own repository, so it never checks
+	// upstream Acode releases for app updates.
 	const { default: checkPluginsUpdate } = await import(
 		/* webpackChunkName: "checkPluginsUpdate" */ "lib/checkPluginsUpdate"
 	);
@@ -594,37 +526,6 @@ function getUpdateMessage(count) {
 	return count === 1
 		? strings["plugin updates singular"]
 		: strings["plugin updates plural"].replace(/\{count\}/, count);
-}
-
-async function promptUpdateCheckConsent() {
-	try {
-		if (isPlayStoreInstall()) {
-			localStorage.setItem("checkForUpdatesPrompted", "true");
-
-			if (settings.value.checkForAppUpdates) {
-				await settings.update({ checkForAppUpdates: false }, false);
-			}
-
-			return;
-		}
-
-		if (Boolean(localStorage.getItem("checkForUpdatesPrompted"))) return;
-
-		if (settings.value.checkForAppUpdates) {
-			localStorage.setItem("checkForUpdatesPrompted", "true");
-			return;
-		}
-
-		const message = strings["prompt update check consent message"];
-		const shouldEnable = await confirm(strings?.confirm, message);
-
-		localStorage.setItem("checkForUpdatesPrompted", "true");
-		if (shouldEnable) {
-			await settings.update({ checkForAppUpdates: true }, false);
-		}
-	} catch (error) {
-		console.error("Failed to prompt for update check consent", error);
-	}
 }
 
 async function loadApp() {
