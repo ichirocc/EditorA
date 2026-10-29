@@ -100,10 +100,12 @@ export function providerError(status, text) {
  */
 function unreachable(url, error) {
 	const cause = error?.cause?.code || error?.cause?.message || error?.message;
-	return new ProviderError(
+	const failure = new ProviderError(
 		`Could not connect to ${new URL(url).host}${cause ? ` (${cause})` : ""}.`,
 		0,
 	);
+	failure.network = true;
+	return failure;
 }
 
 /**
@@ -203,6 +205,8 @@ export function createOpenAICompatibleAdapter({
 	const root = baseUrl.replace(/\/+$/, "");
 	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
 	const auth = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+	// Set once a native request worked after fetch failed: fetch is then
+	// blocked (CORS), not the network, so later requests skip it.
 	let useNative = false;
 
 	/**
@@ -235,8 +239,10 @@ export function createOpenAICompatibleAdapter({
 				});
 			} catch (error) {
 				if (signal?.aborted) throw error;
-				if (!nativePost) throw unreachable(url, error);
-				useNative = true;
+				// Offline: the native request would fail the same way.
+				if (!nativePost || globalThis.navigator?.onLine === false) {
+					throw unreachable(url, error);
+				}
 			}
 			if (response) {
 				if (!response.ok) {
@@ -255,6 +261,7 @@ export function createOpenAICompatibleAdapter({
 			JSON.stringify({ ...body, stream: false }),
 			signal,
 		);
+		useNative = true;
 		addChunk(reply, JSON.parse(text), onEvent);
 		return reply;
 	}

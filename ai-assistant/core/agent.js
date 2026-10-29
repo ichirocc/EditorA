@@ -183,6 +183,8 @@ export function tidyApiError(error) {
 		const detail = error.error?.error?.message;
 		if (detail) error.message = `${error.status}: ${detail}`;
 	}
+	// The request never reached the API (offline, dropped connection).
+	if (error instanceof Anthropic.APIConnectionError) error.network = true;
 	return error;
 }
 

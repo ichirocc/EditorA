@@ -951,5 +951,6 @@
 	"ai confirm pr": "AIが {branch} へのプルリクエストを作成しようとしています:\n{title}",
 	"ai confirm merge": "AIがマージしようとしています。",
 	"ai setup missing": "まだ設定されていない項目があります:",
-	"ai setup missing item": "・{item}（⚙ →「{section}」）"
+	"ai setup missing item": "・{item}（⚙ →「{section}」）",
+	"ai network error": "接続できませんでした。電波の状態を確かめて、もう一度送ってください。（{error}）"
 }

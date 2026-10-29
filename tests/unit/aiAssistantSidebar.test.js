@@ -276,6 +276,28 @@ it("does not start a session without credentials", async () => {
 	expect(container.querySelector(".message.user")).toBeNull();
 });
 
+it("explains a dropped connection and gives the message back", async () => {
+	const { container, claude } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		stringValues: { "ai network error": "Offline: {error}" },
+	});
+	claude.beta.messages.stream = vi.fn(() => {
+		throw Object.assign(new Error("No network connection available"), {
+			network: true,
+		});
+	});
+	container.querySelector("textarea").value = "コードレビュー";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(container.querySelector(".note.error").textContent).toBe(
+		"Offline: No network connection available",
+	);
+	expect(container.querySelector(".message.user")).toBeNull();
+	expect(container.querySelector("textarea").value).toBe("コードレビュー");
+});
+
 it("says which setting is missing and where to enter it", async () => {
 	const { container, mocks } = loadApp({
 		settings: { owner: "o", repo: "r" },

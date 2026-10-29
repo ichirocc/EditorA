@@ -629,6 +629,11 @@ async function send(preset, display) {
 		finishReply();
 		if (abortController?.signal.aborted) {
 			note(strings["ai stopped"]);
+		} else if (isNetworkError(error)) {
+			note(
+				strings["ai network error"].replace("{error}", error.message),
+				"error",
+			);
 		} else {
 			note(error?.message || String(error), "error");
 		}
@@ -646,6 +651,15 @@ async function send(preset, display) {
 		// The assistant may have pushed: keep checking CI as after a button.
 		watchCi();
 	}
+}
+
+/**
+ * Whether a request failed for lack of a connection rather than an answer
+ * from the API: the device is offline, or the request never got through.
+ * @param {any} error
+ */
+function isNetworkError(error) {
+	return !!error?.network || navigator.onLine === false;
 }
 
 function setBusy(value) {
