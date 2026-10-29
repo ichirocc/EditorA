@@ -473,6 +473,9 @@ describe("OpenAI-compatible adapter", () => {
 						{ id: "text-embedding-4" },
 						{ id: "gpt-coder" },
 						{ id: "tts-2" },
+						{ id: "lyria-3.5" },
+						{ id: "gemini-3.8-live" },
+						{ id: "nano-banana-pro-preview" },
 					],
 				}),
 			),
@@ -608,6 +611,99 @@ describe("OpenAI-compatible adapter", () => {
 		await turn();
 		expect(fetch).toHaveBeenCalledTimes(3);
 		expect(nativePost).toHaveBeenCalledTimes(3);
+	});
+
+	it("sends Gemini's thought signature back with each tool call", async () => {
+		const signature = { google: { thought_signature: "EugCCuUC" } };
+		const { fetch, bodies } = scriptedFetch([
+			// Gemini's shape: no index, the signature next to the call, and
+			// "stop" although it called a tool.
+			sseResponse([
+				{
+					choices: [
+						{
+							index: 0,
+							delta: {
+								role: "assistant",
+								tool_calls: [
+									{
+										extra_content: signature,
+										function: {
+											arguments: '{"path":"a.js"}',
+											name: "read_file",
+										},
+										id: "call_1",
+										type: "function",
+									},
+								],
+							},
+						},
+					],
+				},
+				delta({ role: "assistant" }, "stop"),
+			]),
+			sseResponse([delta({ content: "Read it." }), delta({}, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+			apiKey: "k",
+			model: "gemini-flash-latest",
+			fetch,
+		});
+		const executeTool = vi.fn(async () => "content");
+
+		await adapter.runTurn({
+			system: "s",
+			messages: userTurn(adapter),
+			executeTool,
+		});
+
+		expect(executeTool).toHaveBeenCalledWith("read_file", { path: "a.js" });
+		expect(bodies[1].json.messages[2].tool_calls).toEqual([
+			{
+				id: "call_1",
+				type: "function",
+				function: { name: "read_file", arguments: '{"path":"a.js"}' },
+				extra_content: signature,
+			},
+		]);
+	});
+
+	it("tries again while the API is overloaded, then gives up", async () => {
+		const overloaded = () =>
+			new Response(
+				JSON.stringify([{ error: { message: "high demand", code: 503 } }]),
+				{ status: 503 },
+			);
+		const { fetch } = scriptedFetch([
+			overloaded(),
+			sseResponse([delta({ content: "Done." }), delta({}, "stop")]),
+			overloaded(),
+			overloaded(),
+			overloaded(),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			retryDelays: [0, 0],
+		});
+		const events = [];
+		const turn = () =>
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+				onEvent: (event) => events.push(event.type),
+			});
+
+		await turn();
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(events).toContain("retry");
+		// Two retries, then the error reaches the user.
+		await expect(turn()).rejects.toThrow("503: high demand");
+		expect(fetch).toHaveBeenCalledTimes(5);
 	});
 
 	it("names the server it could not connect to", async () => {
