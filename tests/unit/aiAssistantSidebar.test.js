@@ -28,6 +28,7 @@ function loadApp({
 	dialogs = {},
 	models = ["claude-opus-5-5"],
 	extraTools = [],
+	stringValues = {},
 }) {
 	const github = {
 		getBranchHead: vi.fn(async () => ({ commitSha: "base", treeSha: "t0" })),
@@ -180,7 +181,9 @@ function loadApp({
 		},
 		{
 			tag,
-			strings: new Proxy({}, { get: (_target, key) => String(key) }),
+			strings: new Proxy(stringValues, {
+				get: (target, key) => (key in target ? target[key] : String(key)),
+			}),
 			system: { openInBrowser: mocks.openInBrowser },
 			AbortController,
 		},
@@ -264,10 +267,57 @@ it("does not start a session without credentials", async () => {
 	container.querySelector(".composer button").click();
 	for (let i = 0; i < 5; i++) await flush();
 
-	expect(mocks.alert).toHaveBeenCalledWith("ai assistant", "ai setup required");
+	expect(mocks.alert).toHaveBeenCalledWith(
+		"ai assistant",
+		"ai setup missing<br>ai setup missing item<br>ai setup missing item",
+	);
 	expect(github.getBranchHead).not.toHaveBeenCalled();
 	expect(container.querySelector("textarea").value).toBe("Fix it");
 	expect(container.querySelector(".message.user")).toBeNull();
+});
+
+it("explains a dropped connection and gives the message back", async () => {
+	const { container, claude } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		stringValues: { "ai network error": "Offline: {error}" },
+	});
+	claude.beta.messages.stream = vi.fn(() => {
+		throw Object.assign(new Error("No network connection available"), {
+			network: true,
+		});
+	});
+	container.querySelector("textarea").value = "コードレビュー";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(container.querySelector(".note.error").textContent).toBe(
+		"Offline: No network connection available",
+	);
+	expect(container.querySelector(".message.user")).toBeNull();
+	expect(container.querySelector("textarea").value).toBe("コードレビュー");
+});
+
+it("says which setting is missing and where to enter it", async () => {
+	const { container, mocks } = loadApp({
+		settings: { owner: "o", repo: "r" },
+		secretValues: { github_token: "ghp" },
+		stringValues: {
+			"ai setup missing": "Missing:",
+			"ai setup missing item": "{item} in {section}",
+			"ai api key": "{provider} API key",
+			"ai settings model": "AI provider and model",
+		},
+	});
+	container.querySelector("textarea").value = "こんにちは";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 5; i++) await flush();
+
+	// The default provider is Gemini; only its key is missing.
+	expect(mocks.alert).toHaveBeenCalledWith(
+		"ai assistant",
+		"Missing:<br>Google Gemini API key in AI provider and model",
+	);
 });
 
 it("chats, shows the diff, pushes, opens a PR and merges on request", async () => {
@@ -333,7 +383,11 @@ it("chats, shows the diff, pushes, opens a PR and merges on request", async () =
 	expect(container.querySelector(".readiness").classList).toContain("ready");
 
 	await clickButton(container, "ai merge");
-	expect(mocks.confirm).toHaveBeenCalledWith("ai merge", "ai merge confirm");
+	expect(mocks.confirm).toHaveBeenCalledWith(
+		"ai merge",
+		"ai merge confirm",
+		true,
+	);
 	expect(github.mergePullRequest).toHaveBeenCalledWith("o", "r", 3, {
 		sha: "c1",
 		merge_method: "squash",
@@ -365,9 +419,11 @@ it("pushes for the assistant only after the user confirms", async () => {
 		container.querySelector(".composer button").click();
 		for (let i = 0; i < 10; i++) await flush();
 
+		// The dialog shows HTML, so line breaks become <br>.
 		expect(mocks.confirm).toHaveBeenCalledWith(
 			"ai push",
-			"ai confirm push\n\nsrc/app.js",
+			"ai confirm push<br><br>src/app.js",
+			true,
 		);
 		const labels = [...container.querySelectorAll(".tool .label")].map(
 			($label) => $label.textContent,

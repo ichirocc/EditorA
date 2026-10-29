@@ -66,6 +66,27 @@ describe("OpenAI-compatible adapter", () => {
 			type: "function",
 			function: { parameters: { type: "object", required: ["path"] } },
 		});
+		// Gemini rejects object schemas without properties.
+		for (const tool of OPENAI_TOOLS) {
+			const { parameters } = tool.function;
+			expect(
+				Object.keys(parameters.properties).length,
+				tool.function.name,
+			).toBeGreaterThan(0);
+			expect(parameters.required ?? ["x"], tool.function.name).not.toEqual([]);
+		}
+		const status = OPENAI_TOOLS.find(
+			(tool) => tool.function.name === "get_pull_request_status",
+		);
+		expect(status.function.parameters).toEqual({
+			type: "object",
+			properties: {
+				reason: {
+					type: "string",
+					description: "Optional. Not used by the app.",
+				},
+			},
+		});
 	});
 
 	it("streams text and runs tool calls until the model stops", async () => {
@@ -539,6 +560,54 @@ describe("OpenAI-compatible adapter", () => {
 		for (const body of bodies) {
 			expect(body.headers).not.toHaveProperty("Authorization");
 		}
+	});
+
+	it("keeps streaming after a dropped connection, and skips fetch only once native works", async () => {
+		const dropped = new TypeError("Failed to fetch");
+		const fetch = vi
+			.fn()
+			.mockRejectedValueOnce(dropped)
+			.mockResolvedValueOnce(
+				sseResponse([delta({ content: "Streamed." }), delta({}, "stop")]),
+			)
+			.mockRejectedValue(dropped);
+		const nativePost = vi
+			.fn()
+			.mockRejectedValueOnce(
+				Object.assign(new Error("Software caused connection abort"), {
+					network: true,
+				}),
+			)
+			.mockResolvedValue(
+				JSON.stringify({
+					choices: [{ message: { content: "Native." }, finish_reason: "stop" }],
+				}),
+			);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			nativePost,
+		});
+		const turn = () =>
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+			});
+
+		// fetch and the native request both fail: the network dropped.
+		await expect(turn()).rejects.toThrow("Software caused connection abort");
+		// So the next request streams through fetch again.
+		await turn();
+		expect(fetch).toHaveBeenCalledTimes(2);
+		// fetch fails but native works: fetch is blocked, so it is skipped
+		// from then on.
+		await turn();
+		await turn();
+		expect(fetch).toHaveBeenCalledTimes(3);
+		expect(nativePost).toHaveBeenCalledTimes(3);
 	});
 
 	it("names the server it could not connect to", async () => {

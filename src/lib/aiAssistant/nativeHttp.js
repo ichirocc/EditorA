@@ -7,11 +7,15 @@
 
 import { apiErrorMessage } from "../../../ai-assistant/core/errors.js";
 
+// The plugin's codes for a request that never got an answer: generic
+// failure (such as a dropped connection), unknown host, timeout, offline.
+const NETWORK_FAILURES = new Set([-1, -3, -4, -6]);
+
 /**
  * Error for a failed native request, with the provider's message if the
  * body is JSON.
  * @param {{status?:number, error?:string}} failure
- * @returns {Error & {status:number}}
+ * @returns {Error & {status:number, network:boolean}}
  */
 function nativeError(failure) {
 	const status = failure?.status ?? 0;
@@ -20,6 +24,7 @@ function nativeError(failure) {
 		`${status > 0 ? `${status}: ` : ""}${String(message).slice(0, 500)}`,
 	);
 	error.status = status;
+	error.network = NETWORK_FAILURES.has(status);
 	return error;
 }
 

@@ -267,6 +267,9 @@ describe("Anthropic adapter", () => {
 		expect(error.status).toBe(401);
 		const abort = new Anthropic.APIUserAbortError();
 		expect(tidyApiError(abort).message).toBe("Request was aborted.");
+		expect(abort.network).toBeUndefined();
+		const offline = new Anthropic.APIConnectionError({});
+		expect(tidyApiError(offline).network).toBe(true);
 	});
 
 	it("builds user messages from text blocks and keeps a changeable model", () => {

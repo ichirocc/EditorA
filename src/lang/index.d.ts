@@ -953,6 +953,9 @@ declare type LangStrings = {
 	"ai confirm push": string;
 	"ai confirm pr": string;
 	"ai confirm merge": string;
+	"ai setup missing": string;
+	"ai setup missing item": string;
+	"ai network error": string;
 };
 
 declare var strings: LangStrings;

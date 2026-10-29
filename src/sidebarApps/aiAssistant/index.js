@@ -40,6 +40,18 @@ const TOOL_ICONS = {
 
 const markdown = markdownIt({ html: false, linkify: true, breaks: true });
 
+/**
+ * A dialog message that keeps its line breaks: the editor's dialogs show
+ * the message as HTML, where "\n" collapses into a space.
+ * @param {string} text
+ * @returns {string}
+ */
+function dialogHtml(text) {
+	return text
+		.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
+		.replace(/\n/g, "<br>");
+}
+
 /** @type {import("../../../ai-assistant/core/session.js").default|null} */
 let session = null;
 let busy = false;
@@ -456,9 +468,31 @@ async function ensureSession() {
 		secrets.get(secretNameFor(provider)),
 		secrets.get("github_token"),
 	]);
-	const keyMissing = !apiKey && !provider.keyOptional;
-	if (!owner || !repo || !model || keyMissing || !githubToken) {
-		alert(strings["ai assistant"], strings["ai setup required"]);
+	// Say what is missing and where to enter it.
+	const missing = [];
+	if (!model) missing.push([strings["ai model"], strings["ai settings model"]]);
+	if (!apiKey && !provider.keyOptional) {
+		missing.push([
+			strings["ai api key"].replace("{provider}", providerLabel(provider)),
+			strings["ai settings model"],
+		]);
+	}
+	if (!owner || !repo) {
+		missing.push([strings["repository name"], strings["ai settings repo"]]);
+	}
+	if (!githubToken) {
+		missing.push([strings["github token"], strings["ai settings repo"]]);
+	}
+	if (missing.length) {
+		const lines = missing.map(([item, section]) =>
+			strings["ai setup missing item"]
+				.replace("{item}", item)
+				.replace("{section}", section),
+		);
+		alert(
+			strings["ai assistant"],
+			dialogHtml([strings["ai setup missing"], ...lines].join("\n")),
+		);
 		return null;
 	}
 
@@ -595,6 +629,11 @@ async function send(preset, display) {
 		finishReply();
 		if (abortController?.signal.aborted) {
 			note(strings["ai stopped"]);
+		} else if (isNetworkError(error)) {
+			note(
+				strings["ai network error"].replace("{error}", error.message),
+				"error",
+			);
 		} else {
 			note(error?.message || String(error), "error");
 		}
@@ -612,6 +651,15 @@ async function send(preset, display) {
 		// The assistant may have pushed: keep checking CI as after a button.
 		watchCi();
 	}
+}
+
+/**
+ * Whether a request failed for lack of a connection rather than an answer
+ * from the API: the device is offline, or the request never got through.
+ * @param {any} error
+ */
+function isNetworkError(error) {
+	return !!error?.network || navigator.onLine === false;
 }
 
 function setBusy(value) {
@@ -673,7 +721,7 @@ async function confirmAction(request) {
 			...describeWarnings(request),
 		].join("\n\n");
 	}
-	return !!(await confirm(title, message));
+	return !!(await confirm(title, dialogHtml(message), true));
 }
 
 function appendToolLine({ name, input, isError, result }) {
@@ -1140,7 +1188,7 @@ async function merge() {
 		if (!readiness.ready) {
 			alert(
 				strings["ai merge blocked"],
-				describeBlockers(readiness).join("\n"),
+				dialogHtml(describeBlockers(readiness).join("\n")),
 			);
 			return;
 		}
@@ -1152,7 +1200,7 @@ async function merge() {
 				.replace("{branch}", session.baseBranch),
 			...describeWarnings(readiness),
 		].join("\n\n");
-		const ok = await confirm(strings["ai merge"], message);
+		const ok = await confirm(strings["ai merge"], dialogHtml(message), true);
 		if (!ok) return;
 
 		// Re-checks the gate and merges exactly the head it checked.
@@ -1162,7 +1210,7 @@ async function merge() {
 			if (error.readiness) {
 				alert(
 					strings["ai merge blocked"],
-					describeBlockers(error.readiness).join("\n"),
+					dialogHtml(describeBlockers(error.readiness).join("\n")),
 				);
 				return;
 			}

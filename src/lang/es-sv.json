@@ -885,7 +885,7 @@
 	"unavailable": "no disponible",
 	"ai assistant": "AI assistant",
 	"ai settings": "AI assistant settings",
-	"github token": "GitHub token (contents and pull requests: read and write)",
+	"github token": "GitHub token",
 	"repository owner": "Repository owner",
 	"repository name": "Repository name",
 	"base branch": "Base branch",
@@ -949,5 +949,8 @@
 	"ai api key optional": "{provider} API key (optional, only if your server asks for one)",
 	"ai confirm push": "The assistant wants to push {count} file(s) with this commit message:\n{message}",
 	"ai confirm pr": "The assistant wants to open a pull request into {branch}:\n{title}",
-	"ai confirm merge": "The assistant wants to merge."
+	"ai confirm merge": "The assistant wants to merge.",
+	"ai setup missing": "Still to set up:",
+	"ai setup missing item": "• {item} (⚙ → {section})",
+	"ai network error": "Could not connect. Check the connection, then send again. ({error})"
 }
