@@ -220,12 +220,8 @@ class Settings {
 			appIcon: "default",
 			iconTheme: "builtin",
 			// API keys are not stored here (see lib/aiAssistant/secrets); the
-			// AI sidebar picks the default provider and model.
-			aiAssistant: {
-				owner: "",
-				repo: "",
-				baseBranch: "main",
-			},
+			// AI sidebar fills in the default provider, model and repository.
+			aiAssistant: {},
 		};
 		this.value = structuredClone(this.#defaultSettings);
 	}

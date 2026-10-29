@@ -2,15 +2,14 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { DEFAULT_REPOSITORY, withDefaultRepository } from "../core/defaults.js";
 import { DEFAULT_PROVIDER_ID, getProvider } from "../core/providers.js";
 
 const DEFAULT_SETTINGS = {
 	provider: DEFAULT_PROVIDER_ID,
 	model: getProvider(DEFAULT_PROVIDER_ID).defaultModel,
 	baseUrl: "",
-	owner: "",
-	repo: "",
-	baseBranch: "main",
+	...DEFAULT_REPOSITORY,
 };
 
 /**
@@ -43,7 +42,10 @@ export function createConfigStore({
 		}
 		data = {
 			...stored,
-			settings: { ...DEFAULT_SETTINGS, ...stored.settings },
+			settings: withDefaultRepository({
+				...DEFAULT_SETTINGS,
+				...stored.settings,
+			}),
 			secrets: { ...stored.secrets },
 		};
 		return data;

@@ -12,6 +12,7 @@ import secrets from "lib/aiAssistant/secrets";
 import appSettings from "lib/settings";
 import markdownIt from "markdown-it";
 // The assistant's core is the standalone project in ai-assistant/.
+import { withDefaultRepository } from "../../../ai-assistant/core/defaults.js";
 import { diffHunks, diffStat } from "../../../ai-assistant/core/diff.js";
 import {
 	DEFAULT_PROVIDER_ID,
@@ -159,18 +160,15 @@ function onSelected() {
 function config() {
 	const saved = appSettings.value.aiAssistant || {};
 	const fallback = getProvider(DEFAULT_PROVIDER_ID);
-	return {
+	return withDefaultRepository({
 		baseUrl: "",
-		owner: "",
-		repo: "",
-		baseBranch: "main",
 		...saved,
 		// Until the user picks a provider, use the default one with its model
 		// (earlier versions saved the default model without a provider).
 		...(saved.provider
 			? {}
 			: { provider: fallback.id, model: fallback.defaultModel }),
-	};
+	});
 }
 
 /** @param {import("../../../ai-assistant/core/providers.js").Provider} provider */

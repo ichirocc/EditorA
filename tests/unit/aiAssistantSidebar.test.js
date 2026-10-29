@@ -3,6 +3,7 @@
 import tag from "html-tag-js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { runAgentTurn } from "../../ai-assistant/core/agent.js";
+import * as defaults from "../../ai-assistant/core/defaults.js";
 import * as diff from "../../ai-assistant/core/diff.js";
 import * as providers from "../../ai-assistant/core/providers.js";
 import AssistantSession from "../../ai-assistant/core/session.js";
@@ -152,6 +153,7 @@ function loadApp({
 			"dialogs/prompt": { __esModule: true, default: mocks.prompt },
 			"dialogs/select": { __esModule: true, default: mocks.select },
 			dompurify: { __esModule: true, default: { sanitize: (html) => html } },
+			"../../../ai-assistant/core/defaults.js": defaults,
 			"../../../ai-assistant/core/diff.js": diff,
 			"lib/aiAssistant/secrets": {
 				__esModule: true,
@@ -236,17 +238,21 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-it("registers as a sidebar app and asks for setup first", () => {
+it("registers as a sidebar app and starts on this project's repository", () => {
+	// Earlier versions saved the repository fields empty.
 	const { icon, id, title, container } = loadApp({
-		settings: { ...configured, owner: "", repo: "" },
+		settings: { owner: "", repo: "" },
 	});
 	expect([icon, id, title]).toEqual([
 		"chat_bubble",
 		"aiAssistant",
 		"ai assistant",
 	]);
+	expect(container.querySelector(".subtitle").textContent).toBe(
+		"ichirocc/EditorA · main · Google Gemini: gemini-flash-latest",
+	);
 	expect(container.querySelector(".note").textContent).toBe(
-		"ai setup required",
+		"ai session started",
 	);
 	expect(container.querySelector(".workflow").classList).toContain("hidden");
 });

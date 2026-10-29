@@ -21,8 +21,8 @@ describe("assistant config store", () => {
 			provider: "gemini",
 			model: "gemini-flash-latest",
 			baseUrl: "",
-			owner: "",
-			repo: "",
+			owner: "ichirocc",
+			repo: "EditorA",
 			baseBranch: "main",
 		});
 		expect(await store.hasSecret("github_token")).toBe(false);
