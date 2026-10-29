@@ -955,6 +955,9 @@ declare type LangStrings = {
 	"ai models unavailable": string;
 	"ai blocker ci starting": string;
 	"ai api key optional": string;
+	"ai confirm push": string;
+	"ai confirm pr": string;
+	"ai confirm merge": string;
 };
 
 declare var strings: LangStrings;

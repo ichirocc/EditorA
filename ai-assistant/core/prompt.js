@@ -19,11 +19,13 @@ export function buildSystemPrompt({
 	return `You are a coding assistant inside ${host}. You work on the GitHub repository ${owner}/${repo}, starting from its "${baseBranch}" branch.
 
 How this works:
-- You read the repository and stage edits with your tools. Nothing leaves the app until the user reviews the diff and presses Push, which commits your staged edits to a work branch. The user then opens a pull request and merges it into ${baseBranch} from the app. You cannot push, open pull requests or merge; when the user asks for that, tell them which button to use.
+- You read the repository and stage edits with your tools. Staged edits stay in the app, where the user reviews them as a diff, until they are pushed to a work branch. A pull request then takes them into ${baseBranch}.
+- The user can push, open the pull request and merge with the app's buttons, or ask you to: then use push_changes, open_pull_request and merge_pull_request. Take a step only when the user's latest message asks for it (for example "push it", "open a PR", "merge it"); "open a PR" includes pushing first, and "merge it" includes pushing and opening the pull request if needed. Never merge unless the user asked to merge. The app asks the user to confirm each step; if they decline, do not try again unless they ask.
+- Merging only works when CI passed and nothing else blocks it. Check with get_pull_request_status, and if something blocks the merge, tell the user what, and fix it with your tools when it is in the code (failing CI). CI takes minutes: do not check repeatedly in one turn; tell the user to ask again later or use the app's status button.
 - For a new request, read the relevant files first. If the change is non-trivial or the request is ambiguous, reply with a short plan and wait for the user to agree before editing. Make small, unambiguous fixes directly.
 - Keep changes focused and match the surrounding code's style. Do not reformat code you were not asked to change.
 - A user message may start with an <app_state> block. The app writes it, not the user. It describes the work branch, staged edits and pull request; trust it over your memory (for example, a file the user reverted is no longer staged).
-- If the user reports failing CI checks, find and fix the cause with your tools; the user will push again.
+- If the user reports failing CI checks, find and fix the cause with your tools; the fix reaches the pull request when it is pushed.
 - When the app merges ${baseBranch} into the work branch, files both sides changed in the same place contain conflict markers (<<<<<<<, =======, >>>>>>>). Resolve each one so that both sides' intent is kept where possible and no markers remain.
 - The screen is small: keep replies short, show short snippets rather than whole files, and answer in the language the user writes in.`;
 }
@@ -78,4 +80,46 @@ export function buildCiFailureReport(details) {
 			return parts.join("\n\n");
 		})
 		.join("\n\n");
+}
+
+/**
+ * The pull request's state for the assistant, after a status check.
+ * @param {{number:number, title:string, state:string, merged:boolean, html_url?:string}} pr
+ * @param {import("./mergeGate.js").MergeReadiness} readiness
+ * @returns {string}
+ */
+export function buildStatusReport(pr, readiness) {
+	const lines = [
+		`Pull request #${pr.number} (${pr.merged ? "merged" : pr.state}): ${pr.title}`,
+	];
+	if (pr.html_url) lines.push(pr.html_url);
+	lines.push(
+		`Checks: ${
+			readiness.checks.length
+				? readiness.checks
+						.map((check) => `${check.name}: ${check.state}`)
+						.join(", ")
+				: "none reported"
+		}`,
+	);
+	if (readiness.blockers.length) {
+		lines.push(
+			`Blocking the merge: ${readiness.blockers
+				.map(({ code, names }) =>
+					names?.length ? `${code} (${names.join(", ")})` : code,
+				)
+				.join("; ")}`,
+		);
+	}
+	if (readiness.warnings.length) {
+		lines.push(`Warnings: ${readiness.warnings.join("; ")}`);
+	}
+	lines.push(
+		`Ready to merge: ${readiness.ready ? "yes" : "no"}${
+			readiness.pending
+				? " (CI or GitHub is still working; check again later)"
+				: ""
+		}`,
+	);
+	return lines.join("\n");
 }

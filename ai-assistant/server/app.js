@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,17 @@ async function fetchText(url, headers) {
 }
 
 /**
+ * What a tool call worked on, shown next to its name in the chat.
+ * @param {any} input
+ * @returns {string}
+ */
+function toolLabel(input) {
+	const label =
+		input?.path || input?.prefix || input?.title || input?.message || "";
+	return String(label).split("\n")[0];
+}
+
+/**
  * The assistant's HTTP API and web UI for one user and one session at a
  * time. Every API call needs the access token; GitHub is only changed by
  * the push, pull request, merge and base-merge calls the user triggers.
@@ -83,6 +94,11 @@ export function createAssistantApp({
 	let busy = false;
 	/**@type {AbortController|null} */
 	let controller = null;
+	/**
+	 * The GitHub step the assistant is waiting for the user to approve.
+	 * @type {{id:string, finish:(approved:boolean) => void}|null}
+	 */
+	let approval = null;
 	/** Chat history as shown in the UI (the model's own history is in the session). */
 	let log = [];
 
@@ -312,6 +328,38 @@ export function createAssistantApp({
 	}
 
 	/**
+	 * Sends the step to the browser and waits until the user approves or
+	 * declines it (POST /api/session/approve), or the turn is stopped.
+	 * @param {import("../core/session.js").ActionRequest} request
+	 * @param {AbortSignal} signal
+	 * @param {(event:object) => void} emit
+	 * @returns {Promise<boolean>}
+	 */
+	function askApproval(request, signal, emit) {
+		return new Promise((resolve) => {
+			if (signal.aborted) {
+				resolve(false);
+				return;
+			}
+			const id = randomUUID();
+			const onAbort = () => approval?.finish(false);
+			approval = {
+				id,
+				finish(approved) {
+					approval = null;
+					signal.removeEventListener("abort", onAbort);
+					if (!approved) {
+						addLog({ kind: "note", code: `declined ${request.action}` });
+					}
+					resolve(approved);
+				},
+			};
+			signal.addEventListener("abort", onAbort);
+			emit({ type: "approval", id, request });
+		});
+	}
+
+	/**
 	 * Streams one assistant turn as server-sent events.
 	 * @param {import("node:http").ServerResponse} res
 	 * @param {{text:string, display?:string}} body
@@ -352,6 +400,7 @@ export function createAssistantApp({
 		try {
 			await session.send(text, {
 				signal,
+				confirm: (request) => askApproval(request, signal, emit),
 				onEvent(event) {
 					if (event.type === "text") {
 						reply ??= addLog({ kind: "assistant", text: "" });
@@ -362,7 +411,7 @@ export function createAssistantApp({
 						addLog({
 							kind: "tool",
 							name: event.name,
-							label: event.input?.path || event.input?.prefix || "",
+							label: toolLabel(event.input),
 							error: event.isError,
 						});
 					} else if (event.type === "refusal" || event.type === "truncated") {
@@ -420,6 +469,13 @@ export function createAssistantApp({
 			}
 			resetSession();
 			return view();
+		},
+		"POST /api/session/approve": async (body) => {
+			if (!approval || approval.id !== body.id) {
+				throw new HttpError(409, "Nothing is waiting for approval.");
+			}
+			approval.finish(body.allow === true);
+			return { ok: true };
 		},
 		"POST /api/session/stop": async () => {
 			controller?.abort();

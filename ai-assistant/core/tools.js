@@ -1,9 +1,11 @@
 /**
- * Tools the assistant uses to read the repository and stage edits.
+ * Tools the assistant uses to read the repository and stage edits, and to
+ * take the GitHub steps (push, pull request, merge) the user asks for.
  *
- * Nothing here writes to GitHub: edits go into the ChangeSet and are only
- * committed when the user presses "Push". Tool inputs are model output, so
- * every input is validated and every path is confined to the repository.
+ * The file tools only stage edits in the ChangeSet. The GitHub tools are run
+ * by the session (see `actions` below), which asks the user to confirm each
+ * step before it changes anything on GitHub. Tool inputs are model output,
+ * so every input is validated and every path is confined to the repository.
  */
 
 const MAX_READ_CHARS = 150_000;
@@ -84,6 +86,62 @@ export const TOOLS = [
 			required: ["path"],
 		},
 	},
+	{
+		name: "push_changes",
+		description:
+			"Commit all staged edits as one commit on the work branch (created on the first push) and push it to GitHub. Only call this when the user's latest message asks you to push, open a pull request or merge. The app asks the user to confirm first.",
+		eager_input_streaming: true,
+		input_schema: {
+			type: "object",
+			properties: {
+				message: {
+					type: "string",
+					description:
+						"Commit message: a short summary line, optionally followed by a blank line and details.",
+				},
+			},
+			required: ["message"],
+		},
+	},
+	{
+		name: "open_pull_request",
+		description:
+			"Open a pull request from the work branch into the base branch. Push the staged edits first. Only call this when the user's latest message asks for a pull request or a merge. The app asks the user to confirm first.",
+		eager_input_streaming: true,
+		input_schema: {
+			type: "object",
+			properties: {
+				title: { type: "string" },
+				body: {
+					type: "string",
+					description: "What changed and why, in Markdown.",
+				},
+			},
+			required: ["title"],
+		},
+	},
+	{
+		name: "get_pull_request_status",
+		description:
+			"Check the pull request: CI results, conflicts, and whatever blocks the merge.",
+		eager_input_streaming: true,
+		input_schema: { type: "object", properties: {}, required: [] },
+	},
+	{
+		name: "merge_pull_request",
+		description:
+			"Squash-merge the pull request into the base branch. Only call this when the user's latest message explicitly asks to merge. It works only when CI passed and nothing blocks the merge; otherwise it reports what blocks it. The app asks the user to confirm first.",
+		eager_input_streaming: true,
+		input_schema: { type: "object", properties: {}, required: [] },
+	},
+];
+
+/** Tools the session runs itself, because they act on GitHub. */
+export const GITHUB_TOOL_NAMES = [
+	"push_changes",
+	"open_pull_request",
+	"get_pull_request_status",
+	"merge_pull_request",
 ];
 
 export class ToolInputError extends Error {}
@@ -152,6 +210,8 @@ export function validateToolInput(tool, input) {
  * @property {import("./changeSet.js").default} changeSet
  * @property {() => Promise<{files:{path:string, mode:string}[], truncated:boolean}>} listBranchFiles
  * @property {(path:string) => Promise<string|null>} readBranchFile
+ * @property {Record<string, (input:Record<string, any>) => Promise<string>>} [actions]
+ *   handlers for the GitHub tools; without them those tools are refused
  */
 
 /**
@@ -288,7 +348,8 @@ export function createToolExecutor(workspace) {
 
 	return async (name, input) => {
 		const tool = TOOLS.find((entry) => entry.name === name);
-		if (!tool) throw new ToolInputError(`Unknown tool: ${name}`);
-		return handlers[name](validateToolInput(tool, input));
+		const handler = handlers[name] || workspace.actions?.[name];
+		if (!tool || !handler) throw new ToolInputError(`Unknown tool: ${name}`);
+		return handler(validateToolInput(tool, input));
 	};
 }

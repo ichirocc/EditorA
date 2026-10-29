@@ -11,6 +11,10 @@ const TOOL_ICONS = {
 	edit_file: "✎",
 	write_file: "✎",
 	delete_file: "🗑",
+	push_changes: "⇪",
+	open_pull_request: "⇄",
+	get_pull_request_status: "↻",
+	merge_pull_request: "⛙",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -575,9 +579,12 @@ async function send(preset, display) {
 					log.push({
 						kind: "tool",
 						name: event.name,
-						label: event.input?.path || event.input?.prefix || "",
+						label: toolLabel(event.input),
 						error: event.isError,
 					});
+				} else if (event.type === "approval") {
+					render();
+					await answerApproval(event);
 				} else if (event.type === "error") {
 					removed = event.userMessageRemoved;
 				} else if (event.type === "done") {
@@ -601,6 +608,50 @@ async function send(preset, display) {
 		render();
 		watchCi();
 	}
+}
+
+/** Same as the server's: what a tool call worked on. */
+function toolLabel(input) {
+	const label =
+		input?.path || input?.prefix || input?.title || input?.message || "";
+	return String(label).split("\n")[0];
+}
+
+/**
+ * Asks the user about a GitHub step the assistant wants to take. The turn
+ * waits on the server until the answer arrives.
+ * @param {{id:string, request:any}} event
+ */
+async function answerApproval({ id, request }) {
+	const allow = confirm(describeApproval(request));
+	try {
+		await api("POST", "/api/session/approve", { id, allow });
+	} catch (error) {
+		// The turn was stopped meanwhile.
+		addLocalNote(error.message, "error");
+	}
+}
+
+function describeApproval(request) {
+	if (request.action === "push") {
+		return t("approve.push", {
+			count: request.paths.length,
+			branch: request.branch || t("approve.newBranch"),
+			paths: request.paths.map((path) => `• ${path}`).join("\n"),
+			message: request.message,
+		});
+	}
+	if (request.action === "pr") {
+		return t("approve.pr", {
+			branch: request.baseBranch,
+			title: request.title,
+		});
+	}
+	return [
+		t("approve.merge"),
+		t("mergeConfirm", { number: request.number, branch: request.baseBranch }),
+		...describeWarnings(request),
+	].join("\n\n");
 }
 
 async function stop() {

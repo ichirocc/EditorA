@@ -19,6 +19,7 @@ import {
 	PROVIDERS,
 	secretNameFor,
 } from "../../../ai-assistant/core/providers.js";
+import { GITHUB_TOOL_NAMES } from "../../../ai-assistant/core/tools.js";
 
 const MAX_DIFF_LINES = 400;
 const WATCH_FIRST_DELAY = 15_000;
@@ -30,6 +31,10 @@ const TOOL_ICONS = {
 	edit_file: "edit",
 	write_file: "edit",
 	delete_file: "delete",
+	push_changes: "publish",
+	open_pull_request: "git",
+	get_pull_request_status: "refresh",
+	merge_pull_request: "check",
 };
 
 const markdown = markdownIt({ html: false, linkify: true, breaks: true });
@@ -535,6 +540,7 @@ async function send(preset, display) {
 		sent = true;
 		await current.send(text, {
 			signal: abortController.signal,
+			confirm: confirmAction,
 			onEvent(event) {
 				switch (event.type) {
 					case "text":
@@ -563,7 +569,9 @@ async function send(preset, display) {
 						break;
 					case "tool":
 						appendToolLine(event);
-						renderChanges();
+						// A push, pull request or merge changes the whole panel.
+						if (GITHUB_TOOL_NAMES.includes(event.name)) render();
+						else renderChanges();
 						break;
 					case "refusal":
 						finishReply();
@@ -595,6 +603,8 @@ async function send(preset, display) {
 		setBusy(false);
 		render();
 		scrollToEnd();
+		// The assistant may have pushed: keep checking CI as after a button.
+		watchCi();
 	}
 }
 
@@ -626,8 +636,44 @@ function note(text, kind = "info") {
 	scrollToEnd();
 }
 
+/**
+ * Asks the user about a GitHub step the assistant wants to take.
+ * @param {import("../../../ai-assistant/core/session.js").ActionRequest} request
+ * @returns {Promise<boolean>}
+ */
+async function confirmAction(request) {
+	let title;
+	let message;
+	if (request.action === "push") {
+		title = strings["ai push"];
+		message = [
+			strings["ai confirm push"]
+				.replace("{count}", request.paths.length)
+				.replace("{message}", request.message),
+			request.paths.join("\n"),
+		].join("\n\n");
+	} else if (request.action === "pr") {
+		title = strings["ai create pr"];
+		message = strings["ai confirm pr"]
+			.replace("{branch}", request.baseBranch)
+			.replace("{title}", request.title);
+	} else {
+		title = strings["ai merge"];
+		message = [
+			strings["ai confirm merge"],
+			strings["ai merge confirm"]
+				.replace("{number}", request.number)
+				.replace("{branch}", request.baseBranch),
+			...describeWarnings(request),
+		].join("\n\n");
+	}
+	return !!(await confirm(title, message));
+}
+
 function appendToolLine({ name, input, isError, result }) {
-	const label = input?.path || input?.prefix || "";
+	const label = String(
+		input?.path || input?.prefix || input?.title || input?.message || "",
+	).split("\n")[0];
 	$messages.append(
 		<div
 			className={`tool ${isError ? "error" : ""}`}

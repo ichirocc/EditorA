@@ -951,5 +951,8 @@
 	"ai model manual": "Enter a model name…",
 	"ai models unavailable": "Could not load the model list ({error}). Enter a model name.",
 	"ai blocker ci starting": "Waiting for CI to start…",
-	"ai api key optional": "{provider} API key (optional, only if your server asks for one)"
+	"ai api key optional": "{provider} API key (optional, only if your server asks for one)",
+	"ai confirm push": "The assistant wants to push {count} file(s) with this commit message:\n{message}",
+	"ai confirm pr": "The assistant wants to open a pull request into {branch}:\n{title}",
+	"ai confirm merge": "The assistant wants to merge."
 }

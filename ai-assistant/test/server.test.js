@@ -56,11 +56,12 @@ function fakeAdapter(model) {
 			}
 			onEvent({ type: "text", delta: "Fixing " });
 			onEvent({ type: "text", delta: "it." });
+			// Fails harmlessly once a.js already says 42.
 			const result = await executeTool("edit_file", {
 				path: "a.js",
 				old_string: "41",
 				new_string: "42",
-			});
+			}).catch((error) => error.message);
 			onEvent({
 				type: "tool",
 				name: "edit_file",
@@ -68,6 +69,17 @@ function fakeAdapter(model) {
 				result,
 				isError: false,
 			});
+			// The user's text comes last, after the app's state note.
+			if (last.endsWith("push")) {
+				const input = { message: "Fix answer" };
+				onEvent({
+					type: "tool",
+					name: "push_changes",
+					input,
+					result: await executeTool("push_changes", input),
+					isError: false,
+				});
+			}
 			messages.push({ role: "assistant", content: "done" });
 			onEvent({ type: "message" });
 		},
@@ -140,6 +152,41 @@ async function chat(text) {
 		.filter((chunk) => chunk.startsWith("data: "))
 		.map((chunk) => JSON.parse(chunk.slice(6)));
 	return { status: response.status, events };
+}
+
+/** Like chat(), but answers the assistant's approval requests. */
+async function chatAnswering(text, allow) {
+	const response = await fetch(`${base}/api/session/message`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${TOKEN}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ text }),
+	});
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	const events = [];
+	let buffer = "";
+	while (true) {
+		const { value, done } = await reader.read();
+		buffer += decoder.decode(value, { stream: !done });
+		const chunks = buffer.split("\n\n");
+		buffer = done ? "" : chunks.pop();
+		for (const chunk of chunks) {
+			if (!chunk.startsWith("data: ")) continue;
+			const event = JSON.parse(chunk.slice(6));
+			events.push(event);
+			if (event.type === "approval") {
+				const answer = await call("POST", "/api/session/approve", {
+					id: event.id,
+					allow,
+				});
+				expect(answer.status).toBe(200);
+			}
+		}
+		if (done) return events;
+	}
 }
 
 async function configure(extra = {}) {
@@ -354,6 +401,37 @@ describe("standalone assistant server", () => {
 			{ code: "ci failed", names: ["tests"] },
 		]);
 		expect(github.mergePullRequest).not.toHaveBeenCalled();
+	});
+
+	it("pushes for the assistant only after the user approves in the browser", async () => {
+		await configure();
+		const declined = await chatAnswering("Fix it and push", false);
+		const approval = declined.find((event) => event.type === "approval");
+		expect(approval.request).toEqual({
+			action: "push",
+			message: "Fix answer",
+			branch: null,
+			paths: ["a.js"],
+		});
+		expect(github.commitToBranch).not.toHaveBeenCalled();
+		const { state } = declined.at(-1);
+		expect(state.log).toContainEqual({ kind: "note", code: "declined push" });
+		expect(state.log).toContainEqual({
+			kind: "tool",
+			name: "push_changes",
+			label: "Fix answer",
+			error: false,
+		});
+
+		const approved = await chatAnswering("Now push", true);
+		expect(github.commitToBranch).toHaveBeenCalledOnce();
+		expect(approved.at(-1).state.session.workBranch).toMatch(/^ai\/edit-/);
+
+		const stale = await call("POST", "/api/session/approve", {
+			id: approval.id,
+			allow: true,
+		});
+		expect(stale.status).toBe(409);
 	});
 
 	it("stops a running turn on request", async () => {

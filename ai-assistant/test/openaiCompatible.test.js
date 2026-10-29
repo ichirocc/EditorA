@@ -57,6 +57,10 @@ describe("OpenAI-compatible adapter", () => {
 			"edit_file",
 			"write_file",
 			"delete_file",
+			"push_changes",
+			"open_pull_request",
+			"get_pull_request_status",
+			"merge_pull_request",
 		]);
 		expect(OPENAI_TOOLS[1]).toMatchObject({
 			type: "function",

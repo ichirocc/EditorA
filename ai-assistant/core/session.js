@@ -4,9 +4,10 @@ import { evaluateMergeReadiness } from "./mergeGate.js";
 import {
 	buildCiFailureReport,
 	buildStateNote,
+	buildStatusReport,
 	buildSystemPrompt,
 } from "./prompt.js";
-import { createToolExecutor } from "./tools.js";
+import { createToolExecutor, ToolInputError } from "./tools.js";
 
 // GitHub lists at most 300 changed files in a comparison.
 const COMPARE_FILE_LIMIT = 300;
@@ -14,6 +15,8 @@ const READ_CONCURRENCY = 6;
 // GitHub registers CI check runs a little after a push. Until this much time
 // has passed, "no checks yet" means "CI has not started", not "no CI".
 const CI_START_GRACE_MS = 2 * 60_000;
+const DECLINED =
+	"The user declined this step in the app. Do not try it again unless they ask.";
 
 /**
  * Merges one file's two versions against their common ancestor.
@@ -62,13 +65,27 @@ async function forEachLimited(items, limit, fn) {
  */
 
 /**
+ * A GitHub step the assistant wants to take, shown to the user to approve.
+ * @typedef {{action:"push", message:string, branch:string|null, paths:string[]}
+ *   | {action:"pr", title:string, body:string, baseBranch:string}
+ *   | {action:"merge", number:number, title:string, baseBranch:string, headSha:string, warnings:string[]}} ActionRequest
+ */
+
+/**
+ * Asks the user to approve a step; resolves true to go ahead.
+ * @typedef {(request:ActionRequest) => Promise<boolean>} ConfirmAction
+ */
+
+/**
  * One briefing → edit → push → pull request → merge cycle against a
  * repository branch.
  *
- * The assistant only stages edits. Every step that changes GitHub (creating
- * the work branch, committing, opening the pull request, merging) is a
- * separate method the UI calls on an explicit user action, and `merge()`
- * re-checks the merge gate right before merging the exact head it checked.
+ * The assistant stages edits. Every step that changes GitHub (creating the
+ * work branch, committing, opening the pull request, merging) is a method
+ * the UI calls on an explicit user action, or a tool the assistant calls
+ * when the user asks in the chat; the tool asks the host to confirm with
+ * the user first. `merge()` re-checks the merge gate right before merging
+ * the exact head it checked.
  */
 export default class AssistantSession {
 	/**@type {import("./github.js").GitHubClient} */
@@ -88,6 +105,8 @@ export default class AssistantSession {
 	/**@type {number} when the last push happened (ms) */
 	#pushedAt = 0;
 	#executeTool;
+	/**@type {ConfirmAction|null} approval for the turn that is running */
+	#confirm = null;
 
 	/**@type {{commitSha:string, treeSha:string}|null} head the assistant reads from */
 	head = null;
@@ -141,6 +160,12 @@ export default class AssistantSession {
 			changeSet: this.changeSet,
 			listBranchFiles: () => this.#listFiles(),
 			readBranchFile: (path) => this.#readAt(path, this.head.commitSha),
+			actions: {
+				push_changes: (input) => this.#pushTool(input),
+				open_pull_request: (input) => this.#pullRequestTool(input),
+				get_pull_request_status: () => this.#statusTool(),
+				merge_pull_request: () => this.#mergeTool(),
+			},
 		});
 	}
 
@@ -173,8 +198,10 @@ export default class AssistantSession {
 	 * @param {object} [options]
 	 * @param {(event:import("./agent.js").AgentEvent) => void} [options.onEvent]
 	 * @param {AbortSignal} [options.signal]
+	 * @param {ConfirmAction} [options.confirm] asks the user before a GitHub
+	 *   step the assistant takes; without it, the assistant cannot take any
 	 */
-	async send(text, { onEvent, signal } = {}) {
+	async send(text, { onEvent, signal, confirm } = {}) {
 		if (!this.head) throw new Error("Session has not started.");
 		if (this.pr?.merged) {
 			throw new Error("This session is merged. Start a new session.");
@@ -197,6 +224,7 @@ export default class AssistantSession {
 
 		const before = this.messages.length;
 		this.messages.push(this.ai.userMessage(texts));
+		this.#confirm = confirm || null;
 		try {
 			await this.ai.runTurn({
 				system: this.system,
@@ -211,6 +239,8 @@ export default class AssistantSession {
 				error.userMessageRemoved = true;
 			}
 			throw error;
+		} finally {
+			this.#confirm = null;
 		}
 		if (this.messages.length > before) {
 			this.#lastStateNote = note;
@@ -500,11 +530,18 @@ export default class AssistantSession {
 	/**
 	 * Squash-merges the pull request after re-checking the gate. GitHub
 	 * refuses the merge if the head moved after this check.
+	 * @param {object} [options]
+	 * @param {string} [options.headSha] the head the user approved; the merge
+	 *   is refused if the pull request moved on since
 	 * @returns {Promise<import("./mergeGate.js").MergeReadiness>} the readiness
 	 *   that allowed the merge
 	 */
-	async merge() {
+	async merge({ headSha } = {}) {
 		const readiness = await this.refreshStatus();
+		if (headSha && this.pr.head.sha !== headSha) {
+			readiness.blockers.push({ code: "head changed" });
+			readiness.ready = false;
+		}
 		if (!readiness.ready) {
 			const error = new Error("The pull request cannot be merged yet.");
 			error.readiness = readiness;
@@ -521,6 +558,110 @@ export default class AssistantSession {
 			this.pr.number,
 		);
 		return readiness;
+	}
+
+	/**
+	 * Asks the host to confirm a step with the user.
+	 * @param {ActionRequest} request
+	 */
+	async #approved(request) {
+		if (!this.#confirm) return false;
+		return !!(await this.#confirm(request));
+	}
+
+	async #pushTool({ message }) {
+		if (!this.changeSet.size && !this.merging) {
+			return this.workBranch
+				? `Nothing is staged; everything is already pushed to ${this.workBranch}.`
+				: "Nothing is staged, so there is nothing to push.";
+		}
+		const conflicts = this.unresolvedConflicts;
+		if (conflicts.length) {
+			throw new ToolInputError(
+				`Resolve the conflict markers first: ${conflicts.join(", ")}`,
+			);
+		}
+		const text =
+			message.trim() ||
+			(this.merging ? this.mergeMessage : this.briefTitle) ||
+			"Update files";
+		const approved = await this.#approved({
+			action: "push",
+			message: text,
+			branch: this.workBranch,
+			paths: this.changeSet.list().map((change) => change.path),
+		});
+		if (!approved) return DECLINED;
+		const sha = await this.push(text);
+		if (!this.pr) {
+			return `Pushed commit ${sha.slice(0, 7)} to ${this.workBranch}. There is no pull request yet.`;
+		}
+		// Shows "waiting for CI" so the app keeps checking.
+		await this.refreshStatus().catch(() => {});
+		return `Pushed commit ${sha.slice(0, 7)} to ${this.workBranch}; pull request #${this.pr.number} now includes it and CI runs again.`;
+	}
+
+	async #pullRequestTool({ title, body = "" }) {
+		if (this.pr) {
+			return `Pull request #${this.pr.number} already exists (${this.pr.merged ? "merged" : this.pr.state}).`;
+		}
+		if (!this.workBranch || this.changeSet.size || this.merging) {
+			throw new ToolInputError(
+				"Push the staged edits first (push_changes), then open the pull request.",
+			);
+		}
+		const trimmed = title.trim() || this.briefTitle;
+		if (!trimmed) throw new ToolInputError("The title must not be empty.");
+		const approved = await this.#approved({
+			action: "pr",
+			title: trimmed,
+			body,
+			baseBranch: this.baseBranch,
+		});
+		if (!approved) return DECLINED;
+		const pr = await this.openPullRequest({ title: trimmed, body });
+		await this.refreshStatus().catch(() => {});
+		return `Opened pull request #${pr.number}: ${pr.html_url}`;
+	}
+
+	async #statusTool() {
+		if (!this.pr) {
+			return this.workBranch
+				? "There is no pull request yet."
+				: "Nothing is pushed and there is no pull request yet.";
+		}
+		return buildStatusReport(this.pr, await this.refreshStatus());
+	}
+
+	async #mergeTool() {
+		if (!this.pr) {
+			throw new ToolInputError(
+				"There is no pull request to merge. Push and open one first.",
+			);
+		}
+		if (this.pr.merged) return `Pull request #${this.pr.number} is merged.`;
+		const readiness = await this.refreshStatus();
+		if (!readiness.ready) {
+			return `Not merged. ${buildStatusReport(this.pr, readiness)}`;
+		}
+		const { number, title } = this.pr;
+		const headSha = this.pr.head.sha;
+		const approved = await this.#approved({
+			action: "merge",
+			number,
+			title,
+			baseBranch: this.baseBranch,
+			headSha,
+			warnings: readiness.warnings,
+		});
+		if (!approved) return DECLINED;
+		try {
+			await this.merge({ headSha });
+		} catch (error) {
+			if (!error.readiness) throw error;
+			return `Not merged. ${buildStatusReport(this.pr, error.readiness)}`;
+		}
+		return `Merged pull request #${number} into ${this.baseBranch}.`;
 	}
 
 	#branchName() {

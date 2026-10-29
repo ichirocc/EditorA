@@ -6,6 +6,7 @@ import { runAgentTurn } from "../../ai-assistant/core/agent.js";
 import * as diff from "../../ai-assistant/core/diff.js";
 import * as providers from "../../ai-assistant/core/providers.js";
 import AssistantSession from "../../ai-assistant/core/session.js";
+import * as tools from "../../ai-assistant/core/tools.js";
 import { loadSourceModule } from "../helpers/loadSourceModule.js";
 
 // The element helper html-tag-js installs in the app. Unlike the app's JSX
@@ -26,6 +27,7 @@ function loadApp({
 	secretValues = {},
 	dialogs = {},
 	models = ["claude-opus-5-5"],
+	extraTools = [],
 }) {
 	const github = {
 		getBranchHead: vi.fn(async () => ({ commitSha: "base", treeSha: "t0" })),
@@ -76,6 +78,7 @@ function loadApp({
 						new_string: "42",
 					},
 				},
+				...extraTools,
 			],
 		},
 		{
@@ -168,6 +171,7 @@ function loadApp({
 				createGitHubClient: () => github,
 			},
 			"../../../ai-assistant/core/providers.js": providers,
+			"../../../ai-assistant/core/tools.js": tools,
 			"lib/aiAssistant/models": {
 				createEditorModelAdapter: createModelAdapter,
 				EDITOR_HOST: "the test editor",
@@ -329,6 +333,43 @@ it("chats, shows the diff, pushes, opens a PR and merges on request", async () =
 	expect(mocks.openInBrowser).toHaveBeenCalledWith(
 		"https://github.com/o/r/pull/3",
 	);
+});
+
+it("pushes for the assistant only after the user confirms", async () => {
+	for (const answer of [false, true]) {
+		const { container, github, mocks } = loadApp({
+			settings: configured,
+			secretValues: { ...keys },
+			dialogs: { confirm: vi.fn(async () => answer) },
+			extraTools: [
+				{
+					type: "tool_use",
+					id: "t2",
+					name: "push_changes",
+					input: { message: "Fix the answer" },
+				},
+			],
+		});
+		container.querySelector("textarea").value = "Fix it and push";
+		container.querySelector(".composer button").click();
+		for (let i = 0; i < 10; i++) await flush();
+
+		expect(mocks.confirm).toHaveBeenCalledWith(
+			"ai push",
+			"ai confirm push\n\nsrc/app.js",
+		);
+		const labels = [...container.querySelectorAll(".tool .label")].map(
+			($label) => $label.textContent,
+		);
+		expect(labels).toEqual(["src/app.js", "Fix the answer"]);
+		if (answer) {
+			expect(github.commitToBranch).toHaveBeenCalledOnce();
+			expect(container.querySelector(".changes").classList).toContain("hidden");
+		} else {
+			expect(github.createBranch).not.toHaveBeenCalled();
+			expect(github.commitToBranch).not.toHaveBeenCalled();
+		}
+	}
 });
 
 it("does not merge when the user cancels the confirmation", async () => {

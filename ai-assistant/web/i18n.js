@@ -45,6 +45,15 @@ const STRINGS = {
 			"Merged the latest {branch} in without conflicts. Review the changes and push.",
 		"note.merge aborted": "Cancelled merging {branch}.",
 		"note.stopped": "Stopped.",
+		"note.declined push": "You declined the push.",
+		"note.declined pr": "You declined the pull request.",
+		"note.declined merge": "You declined the merge.",
+		"approve.push":
+			"The assistant wants to push {count} file(s) to {branch}:\n{paths}\n\nCommit message:\n{message}",
+		"approve.newBranch": "a new branch",
+		"approve.pr":
+			"The assistant wants to open a pull request into {branch}:\n{title}",
+		"approve.merge": "The assistant wants to merge.",
 		"note.refusal": "The model declined this request.",
 		"note.truncated": "The reply was cut off. Ask the assistant to continue.",
 		"blocker.merged": "The pull request is already merged.",
@@ -136,6 +145,15 @@ const STRINGS = {
 			"最新の {branch} をコンフリクトなしで取り込みました。変更を確認してプッシュしてください。",
 		"note.merge aborted": "{branch} の取り込みを中止しました。",
 		"note.stopped": "停止しました。",
+		"note.declined push": "プッシュを取りやめました。",
+		"note.declined pr": "プルリクエストの作成を取りやめました。",
+		"note.declined merge": "マージを取りやめました。",
+		"approve.push":
+			"AIが {count} 件のファイルを {branch} にプッシュしようとしています:\n{paths}\n\nコミットメッセージ:\n{message}",
+		"approve.newBranch": "新しいブランチ",
+		"approve.pr":
+			"AIが {branch} へのプルリクエストを作成しようとしています:\n{title}",
+		"approve.merge": "AIがマージしようとしています。",
 		"note.refusal": "モデルがこのリクエストを辞退しました。",
 		"note.truncated": "応答が途中で切れました。続けるよう指示してください。",
 		"blocker.merged": "このプルリクエストはマージ済みです。",

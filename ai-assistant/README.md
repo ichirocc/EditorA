@@ -110,6 +110,13 @@ if the assistant should edit `.github/workflows`.
    passed, nothing is unpushed, and the head is the commit you reviewed.
    The server never merges on its own.
 
+Instead of the buttons, you can ask in the chat: "push it", "open a pull
+request", "merge it". The assistant then takes that step with its GitHub
+tools (`push_changes`, `open_pull_request`, `get_pull_request_status`,
+`merge_pull_request`), only when your latest message asks for it, and the
+app shows each push, pull request and merge for you to approve or decline
+first. A merge from the chat goes through the same checks as the button.
+
 ## Security
 
 - The server listens on `127.0.0.1` and every API call needs the access
@@ -162,6 +169,9 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
    （Ollama は `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` で起動し、ツール対応のモデルを選んでください）。
 4. 修正内容を指示 → 差分を確認 → **プッシュ** → **PRを作成** → CI が通ったら **マージ**。
    コンフリクト時は「main を取り込む」、CI 失敗時は「AIに修正を依頼」が使えます。
+   ボタンの代わりにチャットで「プッシュして」「PR を作って」「マージして」と頼むこともできます。
+   AI が実行する前に、プッシュ・PR 作成・マージのそれぞれで確認画面が出ます。マージはボタンと同じ条件
+   （CI 成功・コンフリクトなし）を満たすときだけ行われます。
 
 各社の AI が実際に使えるかは、API キーを環境変数に設定して `npm run check:providers` で確認できます
 （例: `AI_KEY_DEEPSEEK=… npm run check:providers -- --only deepseek`）。モデル一覧の取得と、
