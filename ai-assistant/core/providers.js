@@ -24,6 +24,8 @@
  *   group the providers: a model maker's own API, a service hosting open
  *   models, a model server on this device, or any other API
  * @property {boolean} [keyOptional] works without an API key
+ * @property {string[]} [fallbackModels] models that answer instead when the
+ *   chosen one cannot
  */
 
 /**@type {Provider[]} */
@@ -62,6 +64,10 @@ export const PROVIDERS = [
 		// October 2026, the newest Flash models (and the gemini-flash-latest
 		// alias) were too overloaded to finish a tool turn; this one was fast.
 		defaultModel: "gemini-3.5-flash",
+		// On a free key, the newest models are often overloaded or take
+		// minutes to answer, Pro models have no quota at all, and older ones
+		// are closed to new users: these fast ones answer instead.
+		fallbackModels: ["gemini-3.5-flash", "gemini-flash-lite-latest"],
 	},
 	{
 		id: "xai",
@@ -208,6 +214,9 @@ export function isAllowedBaseUrl(url) {
 	);
 }
 
+// How long a model server that needs no key may take to answer.
+const LOCAL_NO_ANSWER_MS = 15 * 60_000;
+
 /**
  * Creates the adapter a session talks to. The Anthropic SDK and the
  * OpenAI-compatible client are loaded only when used.
@@ -246,5 +255,9 @@ export async function createModelAdapter({
 		model,
 		nativeGet,
 		nativePost,
+		fallbackModels: provider.fallbackModels,
+		// Servers that need no key mostly run on the user's own machine,
+		// where reading a long prompt can take minutes before any answer.
+		...(provider.keyOptional ? { noAnswerMs: LOCAL_NO_ANSWER_MS } : {}),
 	});
 }

@@ -188,6 +188,7 @@ function loadApp({
 			}),
 			system: { openInBrowser: mocks.openInBrowser },
 			AbortController,
+			navigator: { onLine: true },
 		},
 	);
 
@@ -302,6 +303,56 @@ it("explains a dropped connection and gives the message back", async () => {
 	);
 	expect(container.querySelector(".message.user")).toBeNull();
 	expect(container.querySelector("textarea").value).toBe("コードレビュー");
+});
+
+it("says when the model never answered, and gives the message back", async () => {
+	const { container, claude } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		stringValues: { "ai no answer": "Silent for {minutes} min" },
+	});
+	claude.beta.messages.stream = vi.fn(() => {
+		throw Object.assign(new Error("No answer from the model for 3 min."), {
+			noAnswerMs: 180_000,
+		});
+	});
+	container.querySelector("textarea").value = "コードレビュー";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(container.querySelector(".note.error").textContent).toBe(
+		"Silent for 3 min",
+	);
+	expect(container.querySelector(".message.user")).toBeNull();
+	expect(container.querySelector("textarea").value).toBe("コードレビュー");
+});
+
+it("says when another model answers instead of the chosen one", async () => {
+	const { container, createModelAdapter } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+		stringValues: { "ai fallback": "{from} → {to}" },
+	});
+	createModelAdapter.mockImplementation(async ({ model }) => ({
+		model,
+		userMessage: (texts) => ({ role: "user", content: texts.join("\n\n") }),
+		async runTurn({ messages, onEvent }) {
+			onEvent({ type: "fallback", from: "big", to: "small" });
+			onEvent({ type: "text", delta: "Done." });
+			messages.push({ role: "assistant", content: "Done." });
+			onEvent({ type: "message" });
+		},
+	}));
+	container.querySelector("textarea").value = "コードレビュー";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+
+	expect(
+		[...container.querySelectorAll(".note.info")].map((n) => n.textContent),
+	).toContain("big → small");
+	expect(container.querySelector(".message.assistant").textContent).toBe(
+		"Done.",
+	);
 });
 
 it("says which setting is missing and where to enter it", async () => {
