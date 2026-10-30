@@ -70,6 +70,7 @@ async function checkProvider(provider) {
 		streamed: false,
 		reasoning: false,
 		tools: [],
+		fallbacks: [],
 		seconds: 0,
 		error: "",
 	};
@@ -126,6 +127,9 @@ async function checkProvider(provider) {
 				result.tools.push(`${event.name}${event.isError ? "!" : ""}`);
 			}
 			if (event.type === "refusal") refused = true;
+			if (event.type === "fallback") {
+				result.fallbacks.push(`${event.from} -> ${event.to}`);
+			}
 		};
 		const turn = (text) =>
 			session.send(text, {
@@ -184,6 +188,11 @@ for (const provider of providers) {
 			console.log(
 				`                 models: ${result.models ?? "-"}, tool edit: ${result.turn1 ? "yes" : "no"}, follow-up: ${result.turn2 ? "yes" : "no"}, streamed: ${result.streamed ? "yes" : "no"}, reasoning: ${result.reasoning ? "yes" : "no"}, tools: ${result.tools.join(" ") || "-"}, ${result.seconds}s`,
 			);
+			if (result.fallbacks.length) {
+				console.log(
+					`                 answered instead: ${result.fallbacks.join(", ")}`,
+				);
+			}
 			if (result.error) console.log(`                 error: ${result.error}`);
 		}
 	}

@@ -57,6 +57,9 @@ function fakeAdapter(model) {
 					noAnswerMs: 180_000,
 				});
 			}
+			if (last.includes("busy")) {
+				onEvent({ type: "fallback", from: model, to: "model-b" });
+			}
 			if (last.includes("wait")) {
 				await new Promise((_, reject) =>
 					signal.addEventListener("abort", () => reject(signal.reason)),
@@ -468,6 +471,21 @@ describe("standalone assistant server", () => {
 			code: "no answer",
 			level: "error",
 			params: { minutes: 3 },
+		});
+	});
+
+	it("notes when another model answers instead", async () => {
+		await configure();
+		const { events } = await chat("you seem busy");
+		expect(events).toContainEqual({
+			type: "fallback",
+			from: "deepseek-flash",
+			to: "model-b",
+		});
+		expect(events.at(-1).state.log).toContainEqual({
+			kind: "note",
+			code: "fallback",
+			params: { from: "deepseek-flash", to: "model-b" },
 		});
 	});
 

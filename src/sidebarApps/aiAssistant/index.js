@@ -619,6 +619,13 @@ async function send(preset, display) {
 						finishReply();
 						note(strings["ai truncated"], "error");
 						break;
+					case "fallback":
+						note(
+							strings["ai fallback"]
+								.replace("{from}", event.from)
+								.replace("{to}", event.to),
+						);
+						break;
 				}
 				scrollToEnd();
 			},

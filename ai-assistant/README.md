@@ -82,9 +82,15 @@ Gemini is the default because it has a free tier: create an API key at
 no cost in [Google AI Studio](https://aistudio.google.com/apikey). The free
 tier has daily limits, and Google may use what is sent on it (including the
 repository files the assistant reads) to improve its products; use a paid
-key, or a model on this device, for code that must stay private. If Google
-answers that a model is overloaded, or it stops answering, pick another
-Flash model from the list (`gemini-flash-lite-latest` is the fastest).
+key, or a model on this device, for code that must stay private.
+
+Any Gemini model in the list can be chosen. On a free key, the newest
+models are often overloaded or take minutes to answer, Pro models have no
+free quota, and older ones are closed to new users: when the chosen model
+cannot answer, `gemini-3.5-flash` (then `gemini-flash-lite-latest`) answers
+instead for the rest of that turn, and the chat says so. The next message
+starts on the chosen model again.
+
 With every provider but Anthropic, a request that receives nothing for 3
 minutes is stopped with a message (15 minutes for a model server that
 needs no key, such as Ollama).
@@ -197,8 +203,11 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
    [Google AI Studio](https://aistudio.google.com/apikey) で無料で作れます。無料枠には 1 日の上限があり、
    送った内容（AI が読んだファイルを含む）が Google の製品改善に使われることがあります。
    公開したくないコードには、有料のキーか端末上のモデルを使ってください。
-   「混雑している」と断られたり応答が止まったりする場合は、モデル一覧から別の Flash モデル
-   （最も速いのは `gemini-flash-lite-latest`）を選んでください。
+   Gemini はモデル一覧のどれでも選べます。無料のキーでは、新しいモデルは混雑しがちで応答に
+   数分かかることがあり、Pro モデルは無料枠の対象外、古いモデルは新規ユーザーには提供終了です。
+   選んだモデルが答えられないときは、そのやり取りの残りを `gemini-3.5-flash`
+   （その次は `gemini-flash-lite-latest`）が代わりに答え、チャットにその旨を表示します。
+   次のメッセージは、また選んだモデルから始めます。
    Anthropic 以外のプロバイダーでは、AI から 3 分間なにも届かないと待つのをやめて
    メッセージを表示します（Ollama など API キーのいらないサーバーは 15 分）。
    オープンモデル（Llama、Qwen、gpt-oss など）は Hugging Face・Groq・Together AI・Fireworks AI・

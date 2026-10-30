@@ -438,6 +438,12 @@ export function createAssistantApp({
 						});
 					} else if (event.type === "refusal" || event.type === "truncated") {
 						addLog({ kind: "note", code: event.type, level: "error" });
+					} else if (event.type === "fallback") {
+						addLog({
+							kind: "note",
+							code: "fallback",
+							params: { from: event.from, to: event.to },
+						});
 					}
 					emit(event.type === "message" ? { type: "message" } : event);
 				},
