@@ -52,7 +52,7 @@ describe("AI assistant providers", () => {
 
 	it("starts with Gemini, which has a free tier, also for an unknown id", () => {
 		expect(DEFAULT_PROVIDER_ID).toBe("gemini");
-		expect(getProvider("gemini").defaultModel).toBe("gemini-flash-latest");
+		expect(getProvider("gemini").defaultModel).toBe("gemini-3.5-flash");
 		expect(getProvider("deepseek").label).toBe("DeepSeek");
 		expect(getProvider("gone").id).toBe("gemini");
 	});

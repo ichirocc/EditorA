@@ -58,8 +58,10 @@ export const PROVIDERS = [
 		kind: "openai",
 		group: "vendor",
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-		// Google's alias for its latest Flash model, which the free tier covers.
-		defaultModel: "gemini-flash-latest",
+		// A Flash model the free tier covers. Checked against the live API in
+		// October 2026, the newest Flash models (and the gemini-flash-latest
+		// alias) were too overloaded to finish a tool turn; this one was fast.
+		defaultModel: "gemini-3.5-flash",
 	},
 	{
 		id: "xai",

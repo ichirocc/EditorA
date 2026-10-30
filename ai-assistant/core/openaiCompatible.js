@@ -13,7 +13,10 @@ import { TOOLS, ToolInputError } from "./tools.js";
 const MAX_ROUNDS = 60;
 // Model ids that are clearly not chat models, hidden from the model list.
 const NON_CHAT_MODEL =
-	/embed|tts|whisper|dall-e|image|audio|realtime|moderation|transcri|rerank|speech|vision-exp/i;
+	/embed|tts|whisper|dall-e|image|audio|realtime|moderation|transcri|rerank|speech|vision-exp|lyria|nano-banana|robotics|computer-use|deep-research|-live\b|^aqa$/i;
+// Overloaded or rate-limited: worth trying again after a pause.
+const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [2000, 6000];
 // Model types (Together AI) other than chat; "language" is a base model.
 const NON_CHAT_TYPE =
 	/^(?:embedding|image|rerank|moderation|audio|video|transcribe|language)$/;
@@ -109,6 +112,28 @@ function unreachable(url, error) {
 }
 
 /**
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ */
+function pause(ms, signal) {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				reject(signal.reason);
+			},
+			{ once: true },
+		);
+	});
+}
+
+/**
  * Yields the JSON chunks of a server-sent event stream.
  * @param {ReadableStream<Uint8Array>} body
  */
@@ -137,7 +162,9 @@ async function* readEvents(body) {
  * @property {string} content
  * @property {string} reasoning
  * @property {boolean} reasoningContent the reasoning came as `reasoning_content`
- * @property {{id:string, name:string, arguments:string}[]} toolCalls
+ * @property {{id:string, name:string, arguments:string, extra_content?:any}[]} toolCalls
+ *   `extra_content` carries Gemini's thought signature, which must be sent
+ *   back with the call
  * @property {Map<number, Reply["toolCalls"][number]>} slots the call each
  *   stream index is adding to
  * @property {string|null} finish
@@ -180,6 +207,7 @@ function addChunk(reply, chunk, onEvent) {
 		if (call.id) slot.id = call.id;
 		if (call.function?.name && !slot.name) slot.name = call.function.name;
 		if (call.function?.arguments) slot.arguments += call.function.arguments;
+		if (call.extra_content) slot.extra_content = call.extra_content;
 	}
 	if (choice.finish_reason) reply.finish = choice.finish_reason;
 }
@@ -192,6 +220,8 @@ function addChunk(reply, chunk, onEvent) {
  * @param {typeof fetch} [options.fetch]
  * @param {(url:string, headers:Record<string,string>) => Promise<string>} [options.nativeGet]
  * @param {(url:string, headers:Record<string,string>, body:string, signal?:AbortSignal) => Promise<string>} [options.nativePost]
+ * @param {number[]} [options.retryDelays] pauses (ms) before each retry of an
+ *   overloaded or rate-limited request
  * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
 export function createOpenAICompatibleAdapter({
@@ -201,6 +231,7 @@ export function createOpenAICompatibleAdapter({
 	fetch: fetchImpl = fetch,
 	nativeGet = null,
 	nativePost = null,
+	retryDelays = RETRY_DELAYS_MS,
 }) {
 	const root = baseUrl.replace(/\/+$/, "");
 	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
@@ -266,6 +297,28 @@ export function createOpenAICompatibleAdapter({
 		return reply;
 	}
 
+	/**
+	 * complete(), tried again after a pause while the API is overloaded or
+	 * rate-limited (Gemini's free tier often answers 503 or 429). Such an
+	 * answer comes before any output, so nothing is shown twice.
+	 * @param {object} body
+	 * @param {(event:any) => void} onEvent
+	 * @param {AbortSignal} [signal]
+	 */
+	async function completeWithRetry(body, onEvent, signal) {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				return await complete(body, onEvent, signal);
+			} catch (error) {
+				const delay = retryDelays[attempt];
+				if (delay === undefined || !RETRY_STATUS.has(error?.status))
+					throw error;
+				onEvent({ type: "retry" });
+				await pause(delay, signal);
+			}
+		}
+	}
+
 	return {
 		model,
 
@@ -295,7 +348,7 @@ export function createOpenAICompatibleAdapter({
 		}) {
 			for (let round = 0; round < MAX_ROUNDS; round++) {
 				signal?.throwIfAborted();
-				const reply = await complete(
+				const reply = await completeWithRetry(
 					{
 						model: this.model,
 						messages: [{ role: "system", content: system }, ...messages],
@@ -322,11 +375,15 @@ export function createOpenAICompatibleAdapter({
 
 				const assistant = { role: "assistant", content: reply.content };
 				if (calls.length) {
-					assistant.tool_calls = calls.map(({ id, name, arguments: args }) => ({
-						id,
-						type: "function",
-						function: { name, arguments: args || "{}" },
-					}));
+					assistant.tool_calls = calls.map(
+						({ id, name, arguments: args, extra_content }) => ({
+							id,
+							type: "function",
+							function: { name, arguments: args || "{}" },
+							// Gemini rejects a call sent back without its signature.
+							...(extra_content ? { extra_content } : {}),
+						}),
+					);
 					// Thinking models (DeepSeek, Kimi) need their reasoning back
 					// while they are still calling tools in the same turn.
 					if (reply.reasoningContent) {
