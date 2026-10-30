@@ -632,6 +632,9 @@ async function send(preset, display) {
 				strings["ai network error"].replace("{error}", error.message),
 				"error",
 			);
+		} else if (error?.noAnswerMs) {
+			const minutes = Math.max(1, Math.round(error.noAnswerMs / 60_000));
+			note(strings["ai no answer"].replace("{minutes}", minutes), "error");
 		} else {
 			note(error?.message || String(error), "error");
 		}

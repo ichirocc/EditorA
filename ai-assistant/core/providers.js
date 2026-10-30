@@ -208,6 +208,9 @@ export function isAllowedBaseUrl(url) {
 	);
 }
 
+// How long a model server that needs no key may take to answer.
+const LOCAL_NO_ANSWER_MS = 15 * 60_000;
+
 /**
  * Creates the adapter a session talks to. The Anthropic SDK and the
  * OpenAI-compatible client are loaded only when used.
@@ -246,5 +249,8 @@ export async function createModelAdapter({
 		model,
 		nativeGet,
 		nativePost,
+		// Servers that need no key mostly run on the user's own machine,
+		// where reading a long prompt can take minutes before any answer.
+		...(provider.keyOptional ? { noAnswerMs: LOCAL_NO_ANSWER_MS } : {}),
 	});
 }

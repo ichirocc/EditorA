@@ -42,13 +42,21 @@ function fakeGitHub() {
 	};
 }
 
-/** A model that edits a.js, or waits until stopped when asked to. */
+/**
+ * A model that edits a.js, waits until stopped when asked to, or gives up
+ * as a model that never answered.
+ */
 function fakeAdapter(model) {
 	return {
 		model,
 		userMessage: (texts) => ({ role: "user", content: texts.join("\n\n") }),
 		async runTurn({ messages, executeTool, onEvent, signal }) {
 			const last = messages.at(-1).content;
+			if (last.includes("silent")) {
+				throw Object.assign(new Error("No answer from the model for 3 min."), {
+					noAnswerMs: 180_000,
+				});
+			}
 			if (last.includes("wait")) {
 				await new Promise((_, reject) =>
 					signal.addEventListener("abort", () => reject(signal.reason)),
@@ -450,6 +458,17 @@ describe("standalone assistant server", () => {
 		expect(events.at(-1).state.log).toEqual([
 			{ kind: "note", code: "stopped" },
 		]);
+	});
+
+	it("shows a translated note when the model never answers", async () => {
+		await configure();
+		const { events } = await chat("stay silent");
+		expect(events.at(-1).state.log).toContainEqual({
+			kind: "note",
+			code: "no answer",
+			level: "error",
+			params: { minutes: 3 },
+		});
 	});
 
 	it("asks before discarding work when the repository changes", async () => {

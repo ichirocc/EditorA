@@ -59,6 +59,28 @@ async function fetchText(url, headers) {
 }
 
 /**
+ * The chat note for a failed turn. A model that never answered gets a
+ * translated note; other errors show their message.
+ * @param {any} error
+ */
+function errorNote(error) {
+	if (error?.noAnswerMs) {
+		const minutes = Math.max(1, Math.round(error.noAnswerMs / 60_000));
+		return {
+			kind: "note",
+			code: "no answer",
+			level: "error",
+			params: { minutes },
+		};
+	}
+	return {
+		kind: "note",
+		level: "error",
+		text: error?.message || String(error),
+	};
+}
+
+/**
  * What a tool call worked on, shown next to its name in the chat.
  * @param {any} input
  * @returns {string}
@@ -423,15 +445,7 @@ export function createAssistantApp({
 		} catch (error) {
 			if (error?.userMessageRemoved) log.splice(log.indexOf(userEntry), 1);
 			const stopped = signal.aborted;
-			addLog(
-				stopped
-					? { kind: "note", code: "stopped" }
-					: {
-							kind: "note",
-							level: "error",
-							text: error?.message || String(error),
-						},
-			);
+			addLog(stopped ? { kind: "note", code: "stopped" } : errorNote(error));
 			emit({
 				type: "error",
 				message: stopped ? "stopped" : error?.message || String(error),

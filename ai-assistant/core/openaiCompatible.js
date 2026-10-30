@@ -17,6 +17,9 @@ const NON_CHAT_MODEL =
 // Overloaded or rate-limited: worth trying again after a pause.
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS_MS = [2000, 6000];
+// A request that receives nothing for this long is given up: Gemini
+// sometimes keeps a request open without ever answering.
+const NO_ANSWER_MS = 3 * 60_000;
 // Model types (Together AI) other than chat; "language" is a base model.
 const NON_CHAT_TYPE =
 	/^(?:embedding|image|rerank|moderation|audio|video|transcribe|language)$/;
@@ -112,6 +115,48 @@ function unreachable(url, error) {
 }
 
 /**
+ * The error for a request that received nothing for `ms`.
+ * @param {number} ms
+ */
+function noAnswer(ms) {
+	const wait =
+		ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${ms / 1000} s`;
+	const failure = new ProviderError(
+		`No answer from the model for ${wait}. It may be overloaded or stuck: send again, or choose another model.`,
+		0,
+	);
+	failure.noAnswerMs = ms;
+	return failure;
+}
+
+/**
+ * A signal for one request that follows the caller's signal and is also
+ * aborted, with a noAnswer() error, when `alive()` is not called for `ms`.
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ */
+function watchdog(ms, signal) {
+	const controller = new AbortController();
+	const stop = () => controller.abort(signal.reason);
+	if (signal?.aborted) stop();
+	else signal?.addEventListener("abort", stop, { once: true });
+	let timer;
+	const alive = () => {
+		clearTimeout(timer);
+		timer = setTimeout(() => controller.abort(noAnswer(ms)), ms);
+	};
+	alive();
+	return {
+		signal: controller.signal,
+		alive,
+		done() {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", stop);
+		},
+	};
+}
+
+/**
  * @param {number} ms
  * @param {AbortSignal} [signal]
  */
@@ -136,13 +181,15 @@ function pause(ms, signal) {
 /**
  * Yields the JSON chunks of a server-sent event stream.
  * @param {ReadableStream<Uint8Array>} body
+ * @param {() => void} onData called whenever bytes arrive, keep-alives too
  */
-async function* readEvents(body) {
+async function* readEvents(body, onData) {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
 	while (true) {
 		const { value, done } = await reader.read();
+		if (value) onData();
 		buffer += decoder.decode(value, { stream: !done });
 		const lines = buffer.split("\n");
 		buffer = done ? "" : lines.pop();
@@ -222,6 +269,9 @@ function addChunk(reply, chunk, onEvent) {
  * @param {(url:string, headers:Record<string,string>, body:string, signal?:AbortSignal) => Promise<string>} [options.nativePost]
  * @param {number[]} [options.retryDelays] pauses (ms) before each retry of an
  *   overloaded or rate-limited request
+ * @param {number} [options.noAnswerMs] how long a request may receive
+ *   nothing before it is given up; without streaming, the whole reply has
+ *   to arrive within it
  * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
 export function createOpenAICompatibleAdapter({
@@ -232,6 +282,7 @@ export function createOpenAICompatibleAdapter({
 	nativeGet = null,
 	nativePost = null,
 	retryDelays = RETRY_DELAYS_MS,
+	noAnswerMs = NO_ANSWER_MS,
 }) {
 	const root = baseUrl.replace(/\/+$/, "");
 	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
@@ -258,43 +309,54 @@ export function createOpenAICompatibleAdapter({
 		};
 		const url = `${root}/chat/completions`;
 		const headers = { ...auth, "Content-Type": "application/json" };
+		const watch = watchdog(noAnswerMs, signal);
 
-		if (!useNative) {
-			let response = null;
-			try {
-				response = await fetchImpl(url, {
-					method: "POST",
-					headers: { ...headers, Accept: "text/event-stream" },
-					body: JSON.stringify({ ...body, stream: true }),
-					signal,
-				});
-			} catch (error) {
-				if (signal?.aborted) throw error;
-				// Offline: the native request would fail the same way.
-				if (!nativePost || globalThis.navigator?.onLine === false) {
-					throw unreachable(url, error);
+		try {
+			if (!useNative) {
+				let response = null;
+				try {
+					response = await fetchImpl(url, {
+						method: "POST",
+						headers: { ...headers, Accept: "text/event-stream" },
+						body: JSON.stringify({ ...body, stream: true }),
+						signal: watch.signal,
+					});
+				} catch (error) {
+					if (watch.signal.aborted) throw error;
+					// Offline: the native request would fail the same way.
+					if (!nativePost || globalThis.navigator?.onLine === false) {
+						throw unreachable(url, error);
+					}
+				}
+				if (response) {
+					if (!response.ok) {
+						throw providerError(response.status, await response.text());
+					}
+					for await (const chunk of readEvents(response.body, watch.alive)) {
+						addChunk(reply, chunk, onEvent);
+					}
+					return reply;
 				}
 			}
-			if (response) {
-				if (!response.ok) {
-					throw providerError(response.status, await response.text());
-				}
-				for await (const chunk of readEvents(response.body)) {
-					addChunk(reply, chunk, onEvent);
-				}
-				return reply;
+
+			const text = await nativePost(
+				url,
+				headers,
+				JSON.stringify({ ...body, stream: false }),
+				watch.signal,
+			);
+			useNative = true;
+			addChunk(reply, JSON.parse(text), onEvent);
+			return reply;
+		} catch (error) {
+			// Given up for lack of an answer: say so, not "aborted".
+			if (watch.signal.aborted && !signal?.aborted) {
+				throw watch.signal.reason;
 			}
+			throw error;
+		} finally {
+			watch.done();
 		}
-
-		const text = await nativePost(
-			url,
-			headers,
-			JSON.stringify({ ...body, stream: false }),
-			signal,
-		);
-		useNative = true;
-		addChunk(reply, JSON.parse(text), onEvent);
-		return reply;
 	}
 
 	/**

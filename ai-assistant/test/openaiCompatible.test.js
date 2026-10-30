@@ -49,6 +49,37 @@ function scriptedFetch(responses) {
 
 const userTurn = (adapter) => [adapter.userMessage(["<app_state>…", "fix it"])];
 
+/**
+ * A fetch whose streamed reply sends `chunks`, one every `everyMs`. Without
+ * `end`, the stream then stays open without sending more. Like a real
+ * fetch, it fails once its signal is aborted.
+ * @param {object[]} chunks
+ * @param {number} everyMs
+ * @param {{end?: boolean}} [options]
+ */
+function slowFetch(chunks, everyMs, { end = false } = {}) {
+	return vi.fn(async (url, { signal }) => {
+		const encoder = new TextEncoder();
+		const stream = new ReadableStream({
+			async start(controller) {
+				signal.addEventListener("abort", () => controller.error(signal.reason));
+				for (const chunk of chunks) {
+					await new Promise((resolve) => setTimeout(resolve, everyMs));
+					if (signal.aborted) return;
+					controller.enqueue(
+						encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+					);
+				}
+				if (end) {
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+				}
+			},
+		});
+		return new Response(stream, { status: 200 });
+	});
+}
+
 describe("OpenAI-compatible adapter", () => {
 	it("converts the tools to function definitions", () => {
 		expect(OPENAI_TOOLS.map((tool) => tool.function.name)).toEqual([
@@ -704,6 +735,100 @@ describe("OpenAI-compatible adapter", () => {
 		// Two retries, then the error reaches the user.
 		await expect(turn()).rejects.toThrow("503: high demand");
 		expect(fetch).toHaveBeenCalledTimes(5);
+	});
+
+	it("gives up a reply that stops coming, and says so", async () => {
+		const fetch = slowFetch([delta({ content: "Let me " })], 0);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			noAnswerMs: 100,
+		});
+		const events = [];
+		const error = await adapter
+			.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+				onEvent: (event) => events.push(event),
+			})
+			.catch((caught) => caught);
+
+		expect(error).toBeInstanceOf(ProviderError);
+		expect(error.message).toMatch(/^No answer from the model for 0.1 s\./);
+		expect(error.noAnswerMs).toBe(100);
+		expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+		expect(events).toEqual([{ type: "text", delta: "Let me " }]);
+	});
+
+	it("keeps waiting while the reply keeps coming", async () => {
+		// Six pieces 40 ms apart take longer in all than the 150 ms limit,
+		// which counts from the last piece received.
+		const fetch = slowFetch(
+			[
+				...Array.from({ length: 5 }, () => delta({ content: "." })),
+				delta({}, "stop"),
+			],
+			40,
+			{ end: true },
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			noAnswerMs: 150,
+		});
+		const messages = userTurn(adapter);
+		await adapter.runTurn({ system: "s", messages, executeTool: vi.fn() });
+		expect(messages.at(-1)).toEqual({ role: "assistant", content: "....." });
+	});
+
+	it("gives up a native request that never answers", async () => {
+		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
+		const nativePost = vi.fn(
+			(url, headers, body, signal) =>
+				new Promise((_, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason)),
+				),
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			nativePost,
+			noAnswerMs: 100,
+		});
+		await expect(
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+			}),
+		).rejects.toMatchObject({ noAnswerMs: 100 });
+		expect(nativePost.mock.calls[0][3].aborted).toBe(true);
+	});
+
+	it("reports the user's stop as a stop, not as no answer", async () => {
+		const controller = new AbortController();
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch: slowFetch([delta({ content: "Let me " })], 0),
+			noAnswerMs: 60_000,
+		});
+		const turn = adapter.runTurn({
+			system: "s",
+			messages: userTurn(adapter),
+			executeTool: vi.fn(),
+			onEvent: () => controller.abort(new Error("stopped by the user")),
+			signal: controller.signal,
+		});
+		await expect(turn).rejects.toThrow("stopped by the user");
 	});
 
 	it("names the server it could not connect to", async () => {

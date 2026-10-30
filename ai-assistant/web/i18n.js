@@ -45,6 +45,8 @@ const STRINGS = {
 			"Merged the latest {branch} in without conflicts. Review the changes and push.",
 		"note.merge aborted": "Cancelled merging {branch}.",
 		"note.stopped": "Stopped.",
+		"note.no answer":
+			"No answer from the AI for {minutes} min. It may be busy or stuck: send again, or choose another model in the settings.",
 		"note.declined push": "You declined the push.",
 		"note.declined pr": "You declined the pull request.",
 		"note.declined merge": "You declined the merge.",
@@ -145,6 +147,8 @@ const STRINGS = {
 			"最新の {branch} をコンフリクトなしで取り込みました。変更を確認してプッシュしてください。",
 		"note.merge aborted": "{branch} の取り込みを中止しました。",
 		"note.stopped": "停止しました。",
+		"note.no answer":
+			"AI から {minutes} 分間応答がありませんでした。混雑しているか、止まっています。もう一度送るか、設定で別のモデルを選んでください。",
 		"note.declined push": "プッシュを取りやめました。",
 		"note.declined pr": "プルリクエストの作成を取りやめました。",
 		"note.declined merge": "マージを取りやめました。",
