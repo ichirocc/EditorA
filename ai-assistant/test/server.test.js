@@ -146,14 +146,14 @@ async function call(method, url, body, token = TOKEN) {
 }
 
 /** Sends a chat message and collects the streamed events. */
-async function chat(text) {
+async function chat(text, extra = {}) {
 	const response = await fetch(`${base}/api/session/message`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${TOKEN}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ text }),
+		body: JSON.stringify({ text, ...extra }),
 	});
 	if (!response.ok)
 		return { status: response.status, body: await response.json() };
@@ -392,6 +392,89 @@ describe("standalone assistant server", () => {
 			commit_title: "Fix answer (#7)",
 		});
 		expect(merged.body.session.phase).toBe("merged");
+	});
+
+	describe("steps the page takes by itself", () => {
+		/** A pushed edit with an open pull request. */
+		async function openPullRequest() {
+			await configure();
+			await chat("The answer should be 42");
+			await call("POST", "/api/session/push", { message: "Fix" });
+			return call("POST", "/api/session/pr", { title: "Fix answer" });
+		}
+
+		it("fixes failed CI, pushing without asking, once turned on", async () => {
+			github.listCheckRuns.mockResolvedValue([
+				{ id: 3, name: "tests", status: "completed", conclusion: "failure" },
+			]);
+			const opened = await openPullRequest();
+			expect(opened.body.session.autopilot).toEqual({
+				fix: false,
+				merge: false,
+				fixes: 0,
+				max: 3,
+			});
+			expect(opened.body.session.autopilotStep).toBeNull();
+
+			const on = await call("POST", "/api/session/autopilot", { fix: true });
+			expect(on.body.session.autopilot.fix).toBe(true);
+			expect(on.body.session.autopilotStep).toBe("fix");
+
+			const { events } = await chat("CI failed: tests. Fix it and push", {
+				autoFix: true,
+			});
+			expect(events.map((event) => event.type)).not.toContain("approval");
+			expect(github.commitToBranch).toHaveBeenCalledTimes(2);
+			const { session, log } = events.at(-1).state;
+			const fixing = log.findIndex((entry) => entry.code === "auto fixing");
+			expect(log[fixing]).toEqual({
+				kind: "note",
+				code: "auto fixing",
+				params: { count: 1, max: 3 },
+			});
+			expect(log[fixing + 1].text).toBe("CI failed: tests. Fix it and push");
+			expect(session.autopilot.fixes).toBe(1);
+			// The failed head was sent once.
+			expect(session.autopilotStep).toBeNull();
+		});
+
+		it("merges once CI passes, and stops after GitHub refuses", async () => {
+			await openPullRequest();
+			const on = await call("POST", "/api/session/autopilot", { merge: true });
+			expect(on.body.session.autopilotStep).toBe("merge");
+
+			github.mergePullRequest.mockRejectedValueOnce(
+				new Error("405: Merge commits are not allowed"),
+			);
+			const refused = await call("POST", "/api/session/merge", {
+				headSha: "c1",
+				auto: true,
+			});
+			expect(refused.status).toBe(500);
+			const after = (await call("GET", "/api/state")).body.session;
+			expect(after.autopilot.merge).toBe(false);
+			expect(after.autopilotStep).toBeNull();
+
+			await call("POST", "/api/session/autopilot", { merge: true });
+			const merged = await call("POST", "/api/session/merge", {
+				headSha: "c1",
+				auto: true,
+			});
+			expect(merged.body.log.at(-1)).toMatchObject({
+				code: "auto merged",
+				params: { number: 7, branch: "main" },
+			});
+		});
+
+		it("needs an open pull request", async () => {
+			await configure();
+			await chat("The answer should be 42");
+			const refused = await call("POST", "/api/session/autopilot", {
+				merge: true,
+			});
+			expect(refused.status).toBe(409);
+			expect(refused.body.error).toBe("There is no open pull request.");
+		});
 	});
 
 	it("refuses to merge while CI fails", async () => {

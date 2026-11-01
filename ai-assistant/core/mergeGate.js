@@ -1,7 +1,8 @@
 /**
  * Decides whether a pull request may be merged into the base branch.
  *
- * The app only merges on an explicit user instruction, and even then only
+ * The app only merges on an explicit user instruction (or, when the user
+ * turned it on for a pull request, once CI has passed), and even then only
  * when the head it is about to merge has no conflict, is not blocked by
  * branch protection, and every reported CI check has finished successfully.
  */

@@ -184,6 +184,9 @@ export function createAssistantApp({
 					headSha: s.pr.head?.sha || null,
 				},
 				readiness: s.readiness,
+				autopilot: { ...s.autopilot, max: s.maxAutoFixes },
+				// What the page does next by itself, as the user turned on.
+				autopilotStep: s.nextAutopilotStep(),
 				merging: !!s.merging,
 				conflicts: s.unresolvedConflicts,
 				changes: s.changeSet.list().map((change) => {
@@ -384,7 +387,8 @@ export function createAssistantApp({
 	/**
 	 * Streams one assistant turn as server-sent events.
 	 * @param {import("node:http").ServerResponse} res
-	 * @param {{text:string, display?:string}} body
+	 * @param {{text:string, display?:string, autoFix?:boolean}} body autoFix:
+	 *   the page fixes failed CI by itself, as the user turned on
 	 */
 	async function streamMessage(res, body) {
 		const text = String(body.text || "").trim();
@@ -413,6 +417,16 @@ export function createAssistantApp({
 			if (!res.writableFinished) controller?.abort();
 		});
 
+		if (body.autoFix === true && session.nextAutopilotStep() === "fix") {
+			addLog({
+				kind: "note",
+				code: "auto fixing",
+				params: {
+					count: session.autopilot.fixes + 1,
+					max: session.maxAutoFixes,
+				},
+			});
+		}
 		const userEntry = addLog({
 			kind: "user",
 			text: String(body.display || text),
@@ -423,6 +437,7 @@ export function createAssistantApp({
 			await session.send(text, {
 				signal,
 				confirm: (request) => askApproval(request, signal, emit),
+				autoFix: body.autoFix === true,
 				onEvent(event) {
 					if (event.type === "text") {
 						reply ??= addLog({ kind: "assistant", text: "" });
@@ -568,16 +583,32 @@ export function createAssistantApp({
 							readiness: error.readiness,
 						});
 					}
+					// Not tried again by itself after an error GitHub gave.
+					if (body.auto) s.setAutopilot({ merge: false });
 					throw error;
 				}
 				addLog({
 					kind: "note",
 					level: "success",
-					code: "merged",
+					// The page merged by itself, as the user turned on.
+					code: body.auto ? "auto merged" : "merged",
 					params: { number: s.pr.number, branch: s.baseBranch },
 				});
 				return view();
 			}),
+		"POST /api/session/autopilot": async (body) => {
+			const choices = {};
+			for (const key of ["fix", "merge"]) {
+				if (typeof body[key] === "boolean") choices[key] = body[key];
+			}
+			try {
+				requireSession().setAutopilot(choices);
+			} catch (error) {
+				if (error instanceof HttpError) throw error;
+				throw new HttpError(409, error.message);
+			}
+			return view();
+		},
 		"POST /api/session/sync": () =>
 			locked(async () => {
 				const s = requireSession();

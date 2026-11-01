@@ -954,5 +954,12 @@
 	"ai setup missing item": "• {item} (⚙ → {section})",
 	"ai network error": "Could not connect. Check the connection, then send again. ({error})",
 	"ai no answer": "No answer from the AI for {minutes} min. It may be busy or stuck: send again, or choose another model in the settings.",
-	"ai fallback": "{from} could not answer (busy, out of quota or unavailable), so {to} answers instead."
+	"ai fallback": "{from} could not answer (busy, out of quota or unavailable), so {to} answers instead.",
+	"ai auto fix": "Fix failed CI by itself",
+	"ai auto merge": "Merge once CI passes",
+	"ai auto merge confirm": "Merge pull request #{number} into {branch} without asking, as soon as CI has passed and nothing blocks the merge?",
+	"ai auto fix message": "CI failed on the pull request: {names}. Find the cause, fix it and push the fix.",
+	"ai auto fixing": "CI failed: the assistant fixes it by itself ({count} of {max}).",
+	"ai auto fix gave up": "CI still fails after {max} automatic fixes, so automatic fixing is off. Check the pull request.",
+	"ai auto merged": "CI passed: merged pull request #{number} into {branch} by itself."
 }
