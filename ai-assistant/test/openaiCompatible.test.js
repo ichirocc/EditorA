@@ -517,6 +517,38 @@ describe("OpenAI-compatible adapter", () => {
 		expect(nativePost).toHaveBeenCalledTimes(2);
 	});
 
+	it("adds the provider's extra fields to requests that do not stream", async () => {
+		const { fetch, bodies } = scriptedFetch([new TypeError("Failed to fetch")]);
+		const nativePost = vi.fn(async () =>
+			JSON.stringify({
+				choices: [
+					{
+						message: { role: "assistant", content: "Hi." },
+						finish_reason: "stop",
+					},
+				],
+			}),
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "qwen3-32b",
+			fetch,
+			nativePost,
+			nonStreamingParams: { enable_thinking: false },
+		});
+		await adapter.runTurn({
+			system: "s",
+			messages: userTurn(adapter),
+			executeTool: vi.fn(),
+		});
+		expect(bodies[0].json).not.toHaveProperty("enable_thinking");
+		expect(JSON.parse(nativePost.mock.calls[0][2])).toMatchObject({
+			enable_thinking: false,
+			stream: false,
+		});
+	});
+
 	it("does not fall back when the user aborted", async () => {
 		const controller = new AbortController();
 		controller.abort();
