@@ -952,5 +952,7 @@
 	"ai confirm merge": "AIがマージしようとしています。",
 	"ai setup missing": "まだ設定されていない項目があります:",
 	"ai setup missing item": "・{item}（⚙ →「{section}」）",
-	"ai network error": "接続できませんでした。電波の状態を確かめて、もう一度送ってください。（{error}）"
+	"ai network error": "接続できませんでした。電波の状態を確かめて、もう一度送ってください。（{error}）",
+	"ai no answer": "AI から {minutes} 分間応答がありませんでした。混雑しているか、止まっています。もう一度送るか、設定で別のモデルを選んでください。",
+	"ai fallback": "{from} が答えられないため（混雑・上限超過・提供終了）、{to} が代わりに答えます。"
 }

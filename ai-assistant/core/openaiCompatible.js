@@ -11,12 +11,19 @@ import { TOOLS, ToolInputError } from "./tools.js";
  */
 
 const MAX_ROUNDS = 60;
-// Model ids that are clearly not chat models, hidden from the model list.
+// Model ids that are clearly not chat models, or (Google's Antigravity
+// agent models) cannot call tools, hidden from the model list.
 const NON_CHAT_MODEL =
-	/embed|tts|whisper|dall-e|image|audio|realtime|moderation|transcri|rerank|speech|vision-exp|lyria|nano-banana|robotics|computer-use|deep-research|-live\b|^aqa$/i;
+	/embed|tts|whisper|dall-e|image|audio|realtime|moderation|transcri|rerank|speech|vision-exp|lyria|nano-banana|robotics|computer-use|deep-research|-live\b|^aqa$|^antigravity-/i;
 // Overloaded or rate-limited: worth trying again after a pause.
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS_MS = [2000, 6000];
+// Answers after which another model can take over: the model is not offered
+// to this key (404), out of quota (429) or overloaded (5xx).
+const FALLBACK_STATUS = new Set([404, 429, 500, 502, 503, 504]);
+// A request that receives nothing for this long is given up: Gemini
+// sometimes keeps a request open without ever answering.
+const NO_ANSWER_MS = 3 * 60_000;
 // Model types (Together AI) other than chat; "language" is a base model.
 const NON_CHAT_TYPE =
 	/^(?:embedding|image|rerank|moderation|audio|video|transcribe|language)$/;
@@ -112,6 +119,48 @@ function unreachable(url, error) {
 }
 
 /**
+ * The error for a request that received nothing for `ms`.
+ * @param {number} ms
+ */
+function noAnswer(ms) {
+	const wait =
+		ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${ms / 1000} s`;
+	const failure = new ProviderError(
+		`No answer from the model for ${wait}. It may be overloaded or stuck: send again, or choose another model.`,
+		0,
+	);
+	failure.noAnswerMs = ms;
+	return failure;
+}
+
+/**
+ * A signal for one request that follows the caller's signal and is also
+ * aborted, with a noAnswer() error, when `alive()` is not called for `ms`.
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ */
+function watchdog(ms, signal) {
+	const controller = new AbortController();
+	const stop = () => controller.abort(signal.reason);
+	if (signal?.aborted) stop();
+	else signal?.addEventListener("abort", stop, { once: true });
+	let timer;
+	const alive = () => {
+		clearTimeout(timer);
+		timer = setTimeout(() => controller.abort(noAnswer(ms)), ms);
+	};
+	alive();
+	return {
+		signal: controller.signal,
+		alive,
+		done() {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", stop);
+		},
+	};
+}
+
+/**
  * @param {number} ms
  * @param {AbortSignal} [signal]
  */
@@ -136,13 +185,15 @@ function pause(ms, signal) {
 /**
  * Yields the JSON chunks of a server-sent event stream.
  * @param {ReadableStream<Uint8Array>} body
+ * @param {() => void} onData called whenever bytes arrive, keep-alives too
  */
-async function* readEvents(body) {
+async function* readEvents(body, onData) {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
 	while (true) {
 		const { value, done } = await reader.read();
+		if (value) onData();
 		buffer += decoder.decode(value, { stream: !done });
 		const lines = buffer.split("\n");
 		buffer = done ? "" : lines.pop();
@@ -161,7 +212,8 @@ async function* readEvents(body) {
  * @typedef {object} Reply
  * @property {string} content
  * @property {string} reasoning
- * @property {boolean} reasoningContent the reasoning came as `reasoning_content`
+ * @property {boolean} reasoningContent the reply had a `reasoning_content`
+ *   field, possibly empty
  * @property {{id:string, name:string, arguments:string, extra_content?:any}[]} toolCalls
  *   `extra_content` carries Gemini's thought signature, which must be sent
  *   back with the call
@@ -188,10 +240,11 @@ function addChunk(reply, chunk, onEvent) {
 		onEvent({ type: "text", delta: delta.content });
 	}
 	// DeepSeek, Kimi and Qwen use reasoning_content; OpenRouter uses reasoning.
+	if (typeof delta.reasoning_content === "string")
+		reply.reasoningContent = true;
 	const reasoning = delta.reasoning_content ?? delta.reasoning;
 	if (typeof reasoning === "string" && reasoning) {
 		reply.reasoning += reasoning;
-		reply.reasoningContent ||= typeof delta.reasoning_content === "string";
 		onEvent({ type: "thinking", delta: reasoning });
 	}
 	for (const call of delta.tool_calls || []) {
@@ -222,6 +275,12 @@ function addChunk(reply, chunk, onEvent) {
  * @param {(url:string, headers:Record<string,string>, body:string, signal?:AbortSignal) => Promise<string>} [options.nativePost]
  * @param {number[]} [options.retryDelays] pauses (ms) before each retry of an
  *   overloaded or rate-limited request
+ * @param {number} [options.noAnswerMs] how long a request may receive
+ *   nothing before it is given up; without streaming, the whole reply has
+ *   to arrive within it
+ * @param {string[]} [options.fallbackModels] models that take over, in
+ *   order, for the rest of a turn when the chosen one is unavailable, out
+ *   of quota, overloaded or silent
  * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
 export function createOpenAICompatibleAdapter({
@@ -232,6 +291,8 @@ export function createOpenAICompatibleAdapter({
 	nativeGet = null,
 	nativePost = null,
 	retryDelays = RETRY_DELAYS_MS,
+	noAnswerMs = NO_ANSWER_MS,
+	fallbackModels = [],
 }) {
 	const root = baseUrl.replace(/\/+$/, "");
 	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
@@ -258,43 +319,54 @@ export function createOpenAICompatibleAdapter({
 		};
 		const url = `${root}/chat/completions`;
 		const headers = { ...auth, "Content-Type": "application/json" };
+		const watch = watchdog(noAnswerMs, signal);
 
-		if (!useNative) {
-			let response = null;
-			try {
-				response = await fetchImpl(url, {
-					method: "POST",
-					headers: { ...headers, Accept: "text/event-stream" },
-					body: JSON.stringify({ ...body, stream: true }),
-					signal,
-				});
-			} catch (error) {
-				if (signal?.aborted) throw error;
-				// Offline: the native request would fail the same way.
-				if (!nativePost || globalThis.navigator?.onLine === false) {
-					throw unreachable(url, error);
+		try {
+			if (!useNative) {
+				let response = null;
+				try {
+					response = await fetchImpl(url, {
+						method: "POST",
+						headers: { ...headers, Accept: "text/event-stream" },
+						body: JSON.stringify({ ...body, stream: true }),
+						signal: watch.signal,
+					});
+				} catch (error) {
+					if (watch.signal.aborted) throw error;
+					// Offline: the native request would fail the same way.
+					if (!nativePost || globalThis.navigator?.onLine === false) {
+						throw unreachable(url, error);
+					}
+				}
+				if (response) {
+					if (!response.ok) {
+						throw providerError(response.status, await response.text());
+					}
+					for await (const chunk of readEvents(response.body, watch.alive)) {
+						addChunk(reply, chunk, onEvent);
+					}
+					return reply;
 				}
 			}
-			if (response) {
-				if (!response.ok) {
-					throw providerError(response.status, await response.text());
-				}
-				for await (const chunk of readEvents(response.body)) {
-					addChunk(reply, chunk, onEvent);
-				}
-				return reply;
+
+			const text = await nativePost(
+				url,
+				headers,
+				JSON.stringify({ ...body, stream: false }),
+				watch.signal,
+			);
+			useNative = true;
+			addChunk(reply, JSON.parse(text), onEvent);
+			return reply;
+		} catch (error) {
+			// Given up for lack of an answer: say so, not "aborted".
+			if (watch.signal.aborted && !signal?.aborted) {
+				throw watch.signal.reason;
 			}
+			throw error;
+		} finally {
+			watch.done();
 		}
-
-		const text = await nativePost(
-			url,
-			headers,
-			JSON.stringify({ ...body, stream: false }),
-			signal,
-		);
-		useNative = true;
-		addChunk(reply, JSON.parse(text), onEvent);
-		return reply;
 	}
 
 	/**
@@ -304,14 +376,21 @@ export function createOpenAICompatibleAdapter({
 	 * @param {object} body
 	 * @param {(event:any) => void} onEvent
 	 * @param {AbortSignal} [signal]
+	 * @param {boolean} [canFallBack] another model can take over, so a quota
+	 *   error is not waited out
 	 */
-	async function completeWithRetry(body, onEvent, signal) {
+	async function completeWithRetry(body, onEvent, signal, canFallBack) {
 		for (let attempt = 0; ; attempt++) {
 			try {
 				return await complete(body, onEvent, signal);
 			} catch (error) {
 				const delay = retryDelays[attempt];
-				if (delay === undefined || !RETRY_STATUS.has(error?.status))
+				const status = error?.status;
+				if (
+					delay === undefined ||
+					!RETRY_STATUS.has(status) ||
+					(status === 429 && canFallBack)
+				)
 					throw error;
 				onEvent({ type: "retry" });
 				await pause(delay, signal);
@@ -346,18 +425,41 @@ export function createOpenAICompatibleAdapter({
 			onEvent = () => {},
 			signal,
 		}) {
+			// The chosen model first; each turn starts on it again.
+			let models = [
+				this.model,
+				...fallbackModels.filter((id) => id !== this.model),
+			];
 			for (let round = 0; round < MAX_ROUNDS; round++) {
 				signal?.throwIfAborted();
-				const reply = await completeWithRetry(
-					{
-						model: this.model,
-						messages: [{ role: "system", content: system }, ...messages],
-						tools: OPENAI_TOOLS,
-						tool_choice: "auto",
-					},
-					onEvent,
-					signal,
-				);
+				let reply;
+				while (!reply) {
+					let shown = false;
+					try {
+						reply = await completeWithRetry(
+							{
+								model: models[0],
+								messages: [{ role: "system", content: system }, ...messages],
+								tools: OPENAI_TOOLS,
+								tool_choice: "auto",
+							},
+							(event) => {
+								shown ||= event.type !== "retry";
+								onEvent(event);
+							},
+							signal,
+							models.length > 1,
+						);
+					} catch (error) {
+						// Once part of a reply is shown, another model must not
+						// answer over it.
+						const replaceable =
+							!!error?.noAnswerMs || FALLBACK_STATUS.has(error?.status);
+						if (shown || models.length < 2 || !replaceable) throw error;
+						onEvent({ type: "fallback", from: models[0], to: models[1] });
+						models = models.slice(1);
+					}
+				}
 				const calls = reply.toolCalls.map((call, i) => ({
 					...call,
 					id: call.id || `call_${messages.length}_${i}`,
@@ -384,11 +486,13 @@ export function createOpenAICompatibleAdapter({
 							...(extra_content ? { extra_content } : {}),
 						}),
 					);
-					// Thinking models (DeepSeek, Kimi) need their reasoning back
-					// while they are still calling tools in the same turn.
-					if (reply.reasoningContent) {
-						assistant.reasoning_content = reply.reasoning;
-					}
+				}
+				// DeepSeek's thinking mode answers 400 to a request with tools
+				// unless every earlier assistant message, with tool calls or
+				// not, carries its reasoning_content (an empty one too). Kimi
+				// needs it with tool calls.
+				if (reply.reasoningContent) {
+					assistant.reasoning_content = reply.reasoning;
 				}
 				messages.push(assistant);
 				onEvent({ type: "message", message: assistant });

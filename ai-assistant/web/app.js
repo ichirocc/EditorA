@@ -575,6 +575,12 @@ async function send(preset, display) {
 					reply.text += event.delta;
 				} else if (event.type === "message") {
 					reply = null;
+				} else if (event.type === "fallback") {
+					log.push({
+						kind: "note",
+						code: "fallback",
+						params: { from: event.from, to: event.to },
+					});
 				} else if (event.type === "tool") {
 					log.push({
 						kind: "tool",

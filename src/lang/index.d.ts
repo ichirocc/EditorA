@@ -956,6 +956,8 @@ declare type LangStrings = {
 	"ai setup missing": string;
 	"ai setup missing item": string;
 	"ai network error": string;
+	"ai no answer": string;
+	"ai fallback": string;
 };
 
 declare var strings: LangStrings;

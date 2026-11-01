@@ -26,6 +26,7 @@ export function createClaudeClient(apiKey, { browser = false } = {}) {
  *   | {type:"thinking", delta:string}
  *   | {type:"tool", name:string, input:any, result:string, isError:boolean}
  *   | {type:"retry"}
+ *   | {type:"fallback", from:string, to:string}
  *   | {type:"refusal", category:string|null}
  *   | {type:"truncated"}
  *   | {type:"message", message:any}} AgentEvent

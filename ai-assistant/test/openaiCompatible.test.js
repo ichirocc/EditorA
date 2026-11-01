@@ -49,6 +49,37 @@ function scriptedFetch(responses) {
 
 const userTurn = (adapter) => [adapter.userMessage(["<app_state>…", "fix it"])];
 
+/**
+ * A fetch whose streamed reply sends `chunks`, one every `everyMs`. Without
+ * `end`, the stream then stays open without sending more. Like a real
+ * fetch, it fails once its signal is aborted.
+ * @param {object[]} chunks
+ * @param {number} everyMs
+ * @param {{end?: boolean}} [options]
+ */
+function slowFetch(chunks, everyMs, { end = false } = {}) {
+	return vi.fn(async (url, { signal }) => {
+		const encoder = new TextEncoder();
+		const stream = new ReadableStream({
+			async start(controller) {
+				signal.addEventListener("abort", () => controller.error(signal.reason));
+				for (const chunk of chunks) {
+					await new Promise((resolve) => setTimeout(resolve, everyMs));
+					if (signal.aborted) return;
+					controller.enqueue(
+						encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+					);
+				}
+				if (end) {
+					controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+					controller.close();
+				}
+			},
+		});
+		return new Response(stream, { status: 200 });
+	});
+}
+
 describe("OpenAI-compatible adapter", () => {
 	it("converts the tools to function definitions", () => {
 		expect(OPENAI_TOOLS.map((tool) => tool.function.name)).toEqual([
@@ -242,6 +273,50 @@ describe("OpenAI-compatible adapter", () => {
 		expect(bodies[1].json.messages.slice(3).map((m) => m.tool_call_id)).toEqual(
 			["call_a", "call_b"],
 		);
+	});
+
+	it("sends DeepSeek's reasoning back with every assistant message, empty or not", async () => {
+		const { fetch, bodies } = scriptedFetch([
+			sseResponse([
+				delta({ role: "assistant", reasoning_content: "" }),
+				delta({
+					tool_calls: [
+						{
+							index: 0,
+							id: "call_a",
+							function: { name: "read_file", arguments: '{"path":"a.js"}' },
+						},
+					],
+				}),
+				delta({}, "tool_calls"),
+			]),
+			sseResponse([
+				delta({ reasoning_content: "It reads fine." }),
+				delta({ content: "Looks good." }),
+				delta({}, "stop"),
+			]),
+			sseResponse([delta({ content: "Sure." }), delta({}, "stop")]),
+		]);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://api.deepseek.com",
+			apiKey: "k",
+			model: "deepseek-flash",
+			fetch,
+		});
+		const messages = userTurn(adapter);
+		const executeTool = vi.fn(async () => "content of a");
+		await adapter.runTurn({ system: "s", messages, executeTool });
+		messages.push(adapter.userMessage(["and now?"]));
+		await adapter.runTurn({ system: "s", messages, executeTool });
+
+		const assistants = bodies[2].json.messages.filter(
+			(message) => message.role === "assistant",
+		);
+		expect(assistants.map((message) => message.reasoning_content)).toEqual([
+			"",
+			"It reads fine.",
+		]);
+		expect(assistants[1]).not.toHaveProperty("tool_calls");
 	});
 
 	it("does not echo OpenRouter-style reasoning back as reasoning_content", async () => {
@@ -476,6 +551,7 @@ describe("OpenAI-compatible adapter", () => {
 						{ id: "lyria-3.5" },
 						{ id: "gemini-3.8-live" },
 						{ id: "nano-banana-pro-preview" },
+						{ id: "antigravity-preview-latest" },
 					],
 				}),
 			),
@@ -704,6 +780,225 @@ describe("OpenAI-compatible adapter", () => {
 		// Two retries, then the error reaches the user.
 		await expect(turn()).rejects.toThrow("503: high demand");
 		expect(fetch).toHaveBeenCalledTimes(5);
+	});
+
+	it("gives up a reply that stops coming, and says so", async () => {
+		const fetch = slowFetch([delta({ content: "Let me " })], 0);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			noAnswerMs: 100,
+		});
+		const events = [];
+		const error = await adapter
+			.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+				onEvent: (event) => events.push(event),
+			})
+			.catch((caught) => caught);
+
+		expect(error).toBeInstanceOf(ProviderError);
+		expect(error.message).toMatch(/^No answer from the model for 0.1 s\./);
+		expect(error.noAnswerMs).toBe(100);
+		expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+		expect(events).toEqual([{ type: "text", delta: "Let me " }]);
+	});
+
+	it("keeps waiting while the reply keeps coming", async () => {
+		// Six pieces 40 ms apart take longer in all than the 150 ms limit,
+		// which counts from the last piece received.
+		const fetch = slowFetch(
+			[
+				...Array.from({ length: 5 }, () => delta({ content: "." })),
+				delta({}, "stop"),
+			],
+			40,
+			{ end: true },
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			noAnswerMs: 150,
+		});
+		const messages = userTurn(adapter);
+		await adapter.runTurn({ system: "s", messages, executeTool: vi.fn() });
+		expect(messages.at(-1)).toEqual({ role: "assistant", content: "....." });
+	});
+
+	it("gives up a native request that never answers", async () => {
+		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
+		const nativePost = vi.fn(
+			(url, headers, body, signal) =>
+				new Promise((_, reject) =>
+					signal.addEventListener("abort", () => reject(signal.reason)),
+				),
+		);
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch,
+			nativePost,
+			noAnswerMs: 100,
+		});
+		await expect(
+			adapter.runTurn({
+				system: "s",
+				messages: userTurn(adapter),
+				executeTool: vi.fn(),
+			}),
+		).rejects.toMatchObject({ noAnswerMs: 100 });
+		expect(nativePost.mock.calls[0][3].aborted).toBe(true);
+	});
+
+	it("reports the user's stop as a stop, not as no answer", async () => {
+		const controller = new AbortController();
+		const adapter = createOpenAICompatibleAdapter({
+			baseUrl: "https://x.test/v1",
+			apiKey: "k",
+			model: "m",
+			fetch: slowFetch([delta({ content: "Let me " })], 0),
+			noAnswerMs: 60_000,
+		});
+		const turn = adapter.runTurn({
+			system: "s",
+			messages: userTurn(adapter),
+			executeTool: vi.fn(),
+			onEvent: () => controller.abort(new Error("stopped by the user")),
+			signal: controller.signal,
+		});
+		await expect(turn).rejects.toThrow("stopped by the user");
+	});
+
+	describe("with fallback models", () => {
+		const failure = (status) =>
+			new Response(JSON.stringify({ error: { message: `failed ${status}` } }), {
+				status,
+			});
+		const toolCall = sseResponse([
+			delta({
+				tool_calls: [
+					{
+						index: 0,
+						id: "call_a",
+						function: { name: "read_file", arguments: '{"path":"a.js"}' },
+					},
+				],
+			}),
+			delta({}, "tool_calls"),
+		]);
+		const answer = () =>
+			sseResponse([delta({ content: "Done." }), delta({}, "stop")]);
+		const create = (fetch, options = {}) =>
+			createOpenAICompatibleAdapter({
+				baseUrl: "https://x.test/v1",
+				apiKey: "k",
+				model: "chosen",
+				fetch,
+				retryDelays: [0],
+				fallbackModels: ["light", "lighter"],
+				...options,
+			});
+
+		it("continues the turn on the next model, and starts each turn on the chosen one", async () => {
+			const { fetch, bodies } = scriptedFetch([
+				failure(503),
+				failure(503),
+				failure(404),
+				toolCall,
+				answer(),
+				answer(),
+			]);
+			const adapter = create(fetch);
+			const messages = userTurn(adapter);
+			const events = [];
+			const onEvent = (event) => events.push(event);
+			const executeTool = vi.fn(async () => "content of a");
+			await adapter.runTurn({ system: "s", messages, executeTool, onEvent });
+			messages.push(adapter.userMessage(["again"]));
+			await adapter.runTurn({ system: "s", messages, executeTool, onEvent });
+
+			// 503 is tried again first; the rest of the turn stays on "lighter".
+			expect(bodies.map((body) => body.json.model)).toEqual([
+				"chosen",
+				"chosen",
+				"light",
+				"lighter",
+				"lighter",
+				"chosen",
+			]);
+			expect(events.filter((event) => event.type === "fallback")).toEqual([
+				{ type: "fallback", from: "chosen", to: "light" },
+				{ type: "fallback", from: "light", to: "lighter" },
+			]);
+			expect(messages.at(-1)).toEqual({ role: "assistant", content: "Done." });
+		});
+
+		it("does not wait out a quota error while another model can answer", async () => {
+			const { fetch, bodies } = scriptedFetch([failure(429), answer()]);
+			const events = [];
+			await create(fetch).runTurn({
+				system: "s",
+				messages: userTurn(create(fetch)),
+				executeTool: vi.fn(),
+				onEvent: (event) => events.push(event.type),
+			});
+			expect(bodies.map((body) => body.json.model)).toEqual([
+				"chosen",
+				"light",
+			]);
+			expect(events).not.toContain("retry");
+		});
+
+		it("lets another model answer when the chosen one stays silent", async () => {
+			const silent = vi.fn(
+				(url, { signal }) =>
+					new Promise((_, reject) =>
+						signal.addEventListener("abort", () => reject(signal.reason)),
+					),
+			);
+			const fetch = vi.fn(async (url, init) =>
+				JSON.parse(init.body).model === "chosen" ? silent(url, init) : answer(),
+			);
+			const adapter = create(fetch, { noAnswerMs: 50 });
+			const messages = userTurn(adapter);
+			await adapter.runTurn({ system: "s", messages, executeTool: vi.fn() });
+			expect(messages.at(-1)).toEqual({ role: "assistant", content: "Done." });
+		});
+
+		it("does not answer over a reply that was partly shown", async () => {
+			const adapter = create(slowFetch([delta({ content: "Let me " })], 0), {
+				noAnswerMs: 50,
+			});
+			const events = [];
+			await expect(
+				adapter.runTurn({
+					system: "s",
+					messages: userTurn(adapter),
+					executeTool: vi.fn(),
+					onEvent: (event) => events.push(event.type),
+				}),
+			).rejects.toMatchObject({ noAnswerMs: 50 });
+			expect(events).not.toContain("fallback");
+		});
+
+		it("reports a rejected request instead of trying another model", async () => {
+			const { fetch } = scriptedFetch([failure(400)]);
+			await expect(
+				create(fetch).runTurn({
+					system: "s",
+					messages: userTurn(create(fetch)),
+					executeTool: vi.fn(),
+				}),
+			).rejects.toThrow("400: failed 400");
+			expect(fetch).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it("names the server it could not connect to", async () => {
