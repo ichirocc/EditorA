@@ -741,6 +741,122 @@ it("merges the base branch in when the pull request conflicts", async () => {
 	expect(mocks.alert).not.toHaveBeenCalled();
 });
 
+/**
+ * A model that edits src/app.js each turn, and pushes when asked to.
+ * @param {ReturnType<typeof loadApp>["createModelAdapter"]} createModelAdapter
+ */
+function pushingModel(createModelAdapter) {
+	let turn = 0;
+	createModelAdapter.mockImplementation(async ({ model }) => ({
+		model,
+		userMessage: (texts) => ({ role: "user", content: texts.join("\n\n") }),
+		async runTurn({ messages, executeTool, onEvent }) {
+			turn++;
+			await executeTool("write_file", {
+				path: "src/app.js",
+				content: `const answer = ${41 + turn};\n`,
+			});
+			if (messages.at(-1).content.endsWith("ai auto fix message")) {
+				const input = { message: "Fix CI" };
+				onEvent({
+					type: "tool",
+					name: "push_changes",
+					input,
+					result: await executeTool("push_changes", input),
+					isError: false,
+				});
+			}
+			messages.push({ role: "assistant", content: "Done." });
+			onEvent({ type: "message" });
+		},
+	}));
+}
+
+/** Sends a first message, pushes it and opens a pull request. */
+async function openPullRequest(container) {
+	container.querySelector("textarea").value = "Fix";
+	container.querySelector(".composer button").click();
+	for (let i = 0; i < 10; i++) await flush();
+	await clickButton(container, "ai push");
+	await clickButton(container, "ai create pr");
+}
+
+/** Turns on one of the pull request's automatic steps. */
+async function turnOn(container, index) {
+	const $toggle = container.querySelectorAll(".autopilot input")[index];
+	$toggle.checked = true;
+	$toggle.dispatchEvent(new Event("change"));
+	for (let i = 0; i < 15; i++) await flush();
+}
+
+it("fixes failed CI by itself, pushing without asking, once turned on", async () => {
+	const { container, github, mocks, createModelAdapter } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+	});
+	pushingModel(createModelAdapter);
+	github.listCheckRuns.mockResolvedValue([
+		{ id: 7, name: "build", status: "completed", conclusion: "failure" },
+	]);
+	await openPullRequest(container);
+	// Off by default: the failure is only reported.
+	expect(github.commitToBranch).toHaveBeenCalledTimes(1);
+	expect(
+		[...container.querySelectorAll(".autopilot input")].map(($i) => $i.checked),
+	).toEqual([false, false]);
+
+	await turnOn(container, 0);
+	expect(
+		[...container.querySelectorAll(".note")].map(($n) => $n.textContent),
+	).toContain("ai auto fixing");
+	expect(
+		[...container.querySelectorAll(".message.user")].at(-1).textContent,
+	).toBe("ai auto fix message");
+	expect(github.commitToBranch).toHaveBeenCalledTimes(2);
+	expect(mocks.confirm).not.toHaveBeenCalled();
+	expect(container.querySelectorAll(".autopilot input")[0].checked).toBe(true);
+	// The same failed head is not sent again.
+	expect(container.querySelectorAll(".message.user")).toHaveLength(2);
+});
+
+it("merges by itself once CI has passed, after the user agrees", async () => {
+	const { container, github, mocks } = loadApp({
+		settings: configured,
+		secretValues: { ...keys },
+	});
+	let merged = false;
+	const pullRequest = github.getPullRequest.getMockImplementation();
+	github.getPullRequest.mockImplementation(async (...args) => ({
+		...(await pullRequest(...args)),
+		merged,
+		state: merged ? "closed" : "open",
+	}));
+	github.mergePullRequest.mockImplementation(async () => {
+		merged = true;
+		return { merged: true };
+	});
+	await openPullRequest(container);
+
+	mocks.confirm.mockResolvedValueOnce(false);
+	await turnOn(container, 1);
+	expect(mocks.confirm.mock.calls[0][0]).toBe("ai auto merge");
+	expect(github.mergePullRequest).not.toHaveBeenCalled();
+	expect(container.querySelectorAll(".autopilot input")[1].checked).toBe(false);
+
+	await turnOn(container, 1);
+	expect(github.mergePullRequest).toHaveBeenCalledTimes(1);
+	expect(github.mergePullRequest).toHaveBeenCalledWith("o", "r", 3, {
+		sha: "c1",
+		merge_method: "squash",
+		commit_title: "Fix answer (#3)",
+	});
+	expect(
+		[...container.querySelectorAll(".note.success")].map(
+			($n) => $n.textContent,
+		),
+	).toContain("ai auto merged");
+});
+
 it("keeps checking CI while it runs and reports the result", async () => {
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	const tick = () => vi.advanceTimersByTimeAsync(0);

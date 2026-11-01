@@ -537,8 +537,10 @@ function onSendClick() {
 /**
  * @param {string} [preset] message to send instead of the input's text
  * @param {string} [display] shorter text to show in the chat for `preset`
+ * @param {{autoFix?:boolean}} [options] autoFix: the app fixes failed CI by
+ *   itself, as the user turned on for the pull request
  */
-async function send(preset, display) {
+async function send(preset, display, { autoFix = false } = {}) {
 	const text = (preset ?? $input.value).trim();
 	if (!text || busy) return;
 	// A merged session is finished; the next request starts a fresh one.
@@ -579,6 +581,7 @@ async function send(preset, display) {
 		await current.send(text, {
 			signal: abortController.signal,
 			confirm: confirmAction,
+			autoFix,
 			onEvent(event) {
 				switch (event.type) {
 					case "text":
@@ -929,6 +932,7 @@ function renderActions() {
 		);
 	}
 	if (pr && !pr.merged) {
+		$actions.append(renderAutopilot());
 		buttons.push(
 			<button type="button" disabled={busy} onclick={checkStatus}>
 				<span className="icon refresh" />
@@ -947,6 +951,112 @@ function renderActions() {
 	}
 	if (buttons.length) {
 		$actions.append(<div className="buttons">{buttons}</div>);
+	}
+}
+
+/**
+ * The steps the user can let the app take by itself for the pull request.
+ * @returns {HTMLElement}
+ */
+function renderAutopilot() {
+	const toggle = (key, label) => {
+		const $input = (
+			<input
+				type="checkbox"
+				disabled={busy}
+				onchange={() => setAutopilot(key, $input)}
+			/>
+		);
+		$input.checked = session.autopilot[key];
+		return (
+			<label className="autopilot">
+				{$input}
+				<span>{label}</span>
+			</label>
+		);
+	};
+	return (
+		<div className="autopilot-options">
+			{toggle("fix", strings["ai auto fix"])}
+			{toggle("merge", strings["ai auto merge"])}
+		</div>
+	);
+}
+
+/**
+ * @param {"fix"|"merge"} key
+ * @param {HTMLInputElement} $input
+ */
+async function setAutopilot(key, $input) {
+	const on = $input.checked;
+	if (key === "merge" && on) {
+		// Merging without asking is the user's call, once per pull request.
+		const ok = await confirm(
+			strings["ai auto merge"],
+			dialogHtml(
+				strings["ai auto merge confirm"]
+					.replace("{number}", session.pr.number)
+					.replace("{branch}", session.baseBranch),
+			),
+			true,
+		);
+		if (!ok) {
+			$input.checked = false;
+			return;
+		}
+	}
+	session.setAutopilot({ [key]: on });
+	renderActions();
+	runAutopilot();
+}
+
+/**
+ * Takes the step the user let the app take by itself, once one is due:
+ * fixing failed CI, or merging once it has passed.
+ */
+async function runAutopilot() {
+	if (busy || !session) return;
+	const step = session.nextAutopilotStep();
+	if (step === "fix") {
+		const failed = session.readiness.checks.filter(
+			(check) => check.state === "failure",
+		);
+		note(
+			strings["ai auto fixing"]
+				.replace("{count}", session.autopilot.fixes + 1)
+				.replace("{max}", session.maxAutoFixes),
+		);
+		const { text, display } = await ciFixRequest(
+			strings["ai auto fix message"],
+			failed,
+		);
+		await send(text, display, { autoFix: true });
+	} else if (step === "merge") {
+		await runStep(async () => {
+			const { number, head } = session.pr;
+			try {
+				await session.merge({ headSha: head.sha });
+			} catch (error) {
+				// Something changed since the check; the next one decides.
+				if (error.readiness) return;
+				// Not tried again by itself after an error GitHub gave.
+				session.setAutopilot({ merge: false });
+				throw error;
+			}
+			note(
+				strings["ai auto merged"]
+					.replace("{number}", number)
+					.replace("{branch}", session.baseBranch),
+				"success",
+			);
+		});
+	} else if (step === "give up") {
+		session.setAutopilot({ fix: false });
+		note(
+			strings["ai auto fix gave up"].replace("{max}", session.maxAutoFixes),
+			"error",
+		);
+		renderActions();
 	}
 }
 
@@ -1107,6 +1217,7 @@ function watchCi(delay = WATCH_FIRST_DELAY, polls = 0) {
 		watched.pr?.merged ||
 		polls >= WATCH_MAX_POLLS
 	) {
+		runAutopilot();
 		return;
 	}
 	watchTimer = setTimeout(async () => {
@@ -1240,7 +1351,22 @@ async function merge() {
  */
 async function askToFixCi(failed) {
 	if (busy || !session) return;
-	const request = strings["ai fix ci message"].replace(
+	const { text, display } = await ciFixRequest(
+		strings["ai fix ci message"],
+		failed,
+	);
+	send(text, display);
+}
+
+/**
+ * A request to fix failed CI: `template` with the failed checks' names, and
+ * the report on them for the assistant.
+ * @param {string} template
+ * @param {{name:string}[]} failed
+ * @returns {Promise<{text:string, display:string}>}
+ */
+async function ciFixRequest(template, failed) {
+	const request = template.replace(
 		"{names}",
 		failed.map((check) => check.name).join(", "),
 	);
@@ -1253,7 +1379,10 @@ async function askToFixCi(failed) {
 	} finally {
 		setBusy(false);
 	}
-	send(report ? `${request}\n\n${report}` : request, request);
+	return {
+		text: report ? `${request}\n\n${report}` : request,
+		display: request,
+	};
 }
 
 async function syncWithBase() {

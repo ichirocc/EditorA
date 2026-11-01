@@ -958,6 +958,13 @@ declare type LangStrings = {
 	"ai network error": string;
 	"ai no answer": string;
 	"ai fallback": string;
+	"ai auto fix": string;
+	"ai auto merge": string;
+	"ai auto merge confirm": string;
+	"ai auto fix message": string;
+	"ai auto fixing": string;
+	"ai auto fix gave up": string;
+	"ai auto merged": string;
 };
 
 declare var strings: LangStrings;

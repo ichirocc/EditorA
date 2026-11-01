@@ -134,6 +134,15 @@ if the assistant should edit `.github/workflows`.
 4. CI results refresh while checks run. If CI fails, **Ask the assistant to
    fix** sends the failing checks, their annotations and the end of each
    GitHub Actions log to the chat.
+   Two switches under the pull request let the page act by itself, for that
+   pull request only, while it is open:
+   - **Fix failed CI by itself**: when CI fails, the failure goes to the
+     assistant with a request to fix it and push, and that push needs no
+     confirmation (other steps still do). After 3 fixes in a row that CI
+     still fails, the switch turns itself off.
+   - **Merge once CI passes** (confirmed once when turned on): merges as
+     soon as the merge button's conditions hold and at least one check ran.
+     If GitHub refuses the merge, the switch turns itself off.
 5. If the pull request conflicts with or is behind the base branch,
    **Merge in main** merges the base branch into the work branch; the
    assistant resolves conflict markers on request, and you push the result
@@ -141,7 +150,8 @@ if the assistant should edit `.github/workflows`.
 6. **Merge** squash-merges after a confirmation, and only when there is no
    conflict, branch protection does not block it, every reported check
    passed, nothing is unpushed, and the head is the commit you reviewed.
-   The server never merges on its own.
+   The server never merges on its own; only the switch above lets the
+   page merge without asking.
 
 Instead of the buttons, you can ask in the chat: "push it", "open a pull
 request", "merge it". The assistant then takes that step with its GitHub
@@ -215,6 +225,11 @@ GitHub のリポジトリについて AI とチャットし、AI がステージ
    （Ollama は `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` で起動し、ツール対応のモデルを選んでください）。
 4. 修正内容を指示 → 差分を確認 → **プッシュ** → **PRを作成** → CI が通ったら **マージ**。
    コンフリクト時は「main を取り込む」、CI 失敗時は「AIに修正を依頼」が使えます。
+   PR の下のスイッチで、その PR に限り自動で進めることもできます。
+   「CIが失敗したら自動で直す」は、CI の失敗を AI に送って直させ、そのプッシュは確認なしで行います
+   （ほかの操作は確認が出ます）。3 回続けて直しても CI が通らないと自動でオフになります。
+   「CIが通ったら自動でマージ」は、オンにするときに 1 回だけ確認し、マージボタンと同じ条件を満たして
+   チェックが 1 つ以上通ったらマージします。GitHub にマージを断られたら自動でオフになります。
    ボタンの代わりにチャットで「プッシュして」「PR を作って」「マージして」と頼むこともできます。
    AI が実行する前に、プッシュ・PR 作成・マージのそれぞれで確認画面が出ます。マージはボタンと同じ条件
    （CI 成功・コンフリクトなし）を満たすときだけ行われます。
