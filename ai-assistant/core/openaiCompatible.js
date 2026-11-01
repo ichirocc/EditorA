@@ -281,6 +281,8 @@ function addChunk(reply, chunk, onEvent) {
  * @param {string[]} [options.fallbackModels] models that take over, in
  *   order, for the rest of a turn when the chosen one is unavailable, out
  *   of quota, overloaded or silent
+ * @param {object} [options.nonStreamingParams] extra request fields for the
+ *   requests that do not stream (native HTTP)
  * @returns {import("./session.js").ModelAdapter & {listModels: () => Promise<string[]>}}
  */
 export function createOpenAICompatibleAdapter({
@@ -293,6 +295,7 @@ export function createOpenAICompatibleAdapter({
 	retryDelays = RETRY_DELAYS_MS,
 	noAnswerMs = NO_ANSWER_MS,
 	fallbackModels = [],
+	nonStreamingParams = {},
 }) {
 	const root = baseUrl.replace(/\/+$/, "");
 	// Local model servers (Ollama, LM Studio, llama.cpp) need no key.
@@ -352,7 +355,7 @@ export function createOpenAICompatibleAdapter({
 			const text = await nativePost(
 				url,
 				headers,
-				JSON.stringify({ ...body, stream: false }),
+				JSON.stringify({ ...body, ...nonStreamingParams, stream: false }),
 				watch.signal,
 			);
 			useNative = true;

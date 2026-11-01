@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	createModelAdapter,
 	DEFAULT_PROVIDER_ID,
 	getProvider,
 	isAllowedBaseUrl,
@@ -63,6 +64,65 @@ describe("AI assistant providers", () => {
 			// Must match ai_key_[a-z0-9_]{1,32} in Authenticator.java.
 			expect(secretNameFor(provider)).toMatch(/^ai_key_[a-z0-9_]{1,32}$/);
 		}
+	});
+
+	describe("adapters", () => {
+		afterEach(() => vi.unstubAllGlobals());
+		const reply = (content) =>
+			JSON.stringify({
+				choices: [
+					{ message: { role: "assistant", content }, finish_reason: "stop" },
+				],
+			});
+		const turn = (adapter) =>
+			adapter.runTurn({
+				system: "s",
+				messages: [adapter.userMessage(["hi"])],
+				executeTool: vi.fn(),
+			});
+
+		it("let Gemini's fast models answer when the chosen one cannot", async () => {
+			const models = [];
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (url, init) => {
+					const { model } = JSON.parse(init.body);
+					models.push(model);
+					return model === "gemini-3.1-pro-preview"
+						? new Response('{"error":{"message":"quota"}}', { status: 429 })
+						: new Response(
+								`data: ${JSON.stringify({ choices: [{ delta: { content: "Hi." }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+							);
+				}),
+			);
+			const adapter = await createModelAdapter({
+				provider: getProvider("gemini"),
+				model: "gemini-3.1-pro-preview",
+				apiKey: "k",
+			});
+			await turn(adapter);
+			expect(models).toEqual(["gemini-3.1-pro-preview", "gemini-3.5-flash"]);
+		});
+
+		it("turn Qwen's thinking off where requests do not stream", async () => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => {
+					throw new TypeError("Failed to fetch");
+				}),
+			);
+			const nativePost = vi.fn(async () => reply("Hi."));
+			const adapter = await createModelAdapter({
+				provider: getProvider("qwen"),
+				model: "qwen3-32b",
+				apiKey: "k",
+				nativePost,
+			});
+			await turn(adapter);
+			expect(JSON.parse(nativePost.mock.calls[0][2]).enable_thinking).toBe(
+				false,
+			);
+		});
 	});
 
 	it("only allows HTTPS, or HTTP to the device itself", () => {
