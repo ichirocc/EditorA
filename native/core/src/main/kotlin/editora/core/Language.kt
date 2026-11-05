@@ -172,5 +172,24 @@ object Languages {
 		return ALL.firstOrNull { extension in it.extensions } ?: PLAIN
 	}
 
+	/** JSON files that are read as JSON with comments (JSONC) by the tools that use them. */
+	private val JSONC_FILE_NAMES = setOf(
+		"tsconfig.json", "jsconfig.json", "settings.json", "launch.json", "tasks.json",
+		"extensions.json", "keybindings.json", "devcontainer.json", ".devcontainer.json",
+	)
+
+	/**
+	 * False for strict JSON (a .json or .webmanifest file), whose parsers reject comments.
+	 * .jsonc and .json5 files, VS Code / TypeScript config files and untitled
+	 * documents ([fileName] null) allow them.
+	 */
+	fun allowsComments(language: Language, fileName: String?): Boolean {
+		if (language != JSON || fileName.isNullOrBlank()) return true
+		val name = fileName.substringAfterLast('/').lowercase()
+		if (name in JSONC_FILE_NAMES || name.startsWith("tsconfig.")) return true
+		val extension = name.substringAfterLast('.', missingDelimiterValue = "")
+		return extension != "json" && extension != "webmanifest"
+	}
+
 	fun byId(id: String?): Language = ALL.firstOrNull { it.id == id } ?: PLAIN
 }

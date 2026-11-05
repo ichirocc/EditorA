@@ -58,6 +58,7 @@
     <string name="delete_confirm">%1$s を削除しますか？元に戻せません。</string>
     <string name="name_hint">名前</string>
     <string name="operation_failed">失敗しました: %1$s</string>
+    <string name="json_no_comments">JSON ファイルにはコメントを書けません。コメント付きにするには .jsonc ファイルにしてください。</string>
 
     <string name="menu_preview">プレビュー</string>
     <string name="menu_goto_line">行へ移動</string>

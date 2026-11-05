@@ -34,7 +34,6 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import editora.core.DecodeResult
 import editora.core.EditOps
-import editora.core.EditResult
 import editora.core.EncodeResult
 import editora.core.Languages
 import editora.core.LineEnding
@@ -329,20 +328,24 @@ class MainActivity : Activity(), CodeEditText.Listener {
 		}
 	}
 
-	/** Runs a line command on the current selection as a single undo step. */
-	private fun runEditOp(op: (CharSequence, Int, Int) -> EditResult?) {
-		val text = editor.text ?: return
-		val start = editor.selectionStart.coerceAtLeast(0)
-		val end = editor.selectionEnd.coerceAtLeast(0)
-		val result = op(text, minOf(start, end), maxOf(start, end)) ?: return
-		editor.applyEditResult(result)
-		ensureCursorVisible()
-	}
+	// Line commands. Menu items, shortcuts and quick keys all call these, and
+	// they all go through CodeEditText.runLineCommand.
 
 	private fun toggleComment() {
-		val language = current?.language ?: return
-		runEditOp { t, s, e -> EditOps.toggleComment(t, s, e, language) }
+		val doc = current ?: return
+		val applied = editor.runLineCommand { t, s, e -> EditOps.toggleComment(t, s, e, doc.language, doc.name) }
+		if (!applied && !Languages.allowsComments(doc.language, doc.name)) toast(getString(R.string.json_no_comments))
 	}
+
+	private fun indentSelection() = editor.runLineCommand { t, s, e -> EditOps.indent(t, s, e, editor.indentUnit) }
+
+	private fun outdentSelection() = editor.outdentLines()
+
+	private fun duplicateSelection() = editor.runLineCommand(EditOps::duplicateLines)
+
+	private fun moveSelection(up: Boolean) = editor.runLineCommand { t, s, e -> EditOps.moveLines(t, s, e, up) }
+
+	override fun onLineCommandApplied() = ensureCursorVisible()
 
 	private fun openPreview() {
 		val doc = current ?: return
@@ -417,8 +420,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 				isFocusableInTouchMode = false
 				setOnClickListener {
 					when (key) {
-						"Tab" -> editor.insertAtCursor(editor.indentUnit)
-						"⇤" -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
+						// Same as the hardware Tab / Shift+Tab: a selection is indented, never replaced.
+						"Tab" -> editor.indentOrInsertTab()
+						"⇤" -> outdentSelection()
 						"//" -> toggleComment()
 						"←" -> editor.moveCursor(-1)
 						"→" -> editor.moveCursor(1)
@@ -963,11 +967,11 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			ID_FONT_LARGER -> changeFontSize(1f)
 			ID_FONT_SMALLER -> changeFontSize(-1f)
 			ID_TOGGLE_COMMENT -> toggleComment()
-			ID_INDENT -> runEditOp { t, s, e -> EditOps.indent(t, s, e, editor.indentUnit) }
-			ID_OUTDENT -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
-			ID_DUPLICATE -> runEditOp(EditOps::duplicateLines)
-			ID_MOVE_UP -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = true) }
-			ID_MOVE_DOWN -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = false) }
+			ID_INDENT -> indentSelection()
+			ID_OUTDENT -> outdentSelection()
+			ID_DUPLICATE -> duplicateSelection()
+			ID_MOVE_UP -> moveSelection(up = true)
+			ID_MOVE_DOWN -> moveSelection(up = false)
 			ID_AUTO_CLOSE -> {
 				val enabled = !prefs.getBoolean(KEY_AUTO_CLOSE, true)
 				prefs.edit().putBoolean(KEY_AUTO_CLOSE, enabled).apply()
@@ -986,8 +990,8 @@ class MainActivity : Activity(), CodeEditText.Listener {
 	override fun onShortcut(keyCode: Int, event: KeyEvent): Boolean {
 		if (event.isAltPressed && !event.isCtrlPressed) {
 			when (keyCode) {
-				KeyEvent.KEYCODE_DPAD_UP -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = true) }
-				KeyEvent.KEYCODE_DPAD_DOWN -> runEditOp { t, s, e -> EditOps.moveLines(t, s, e, up = false) }
+				KeyEvent.KEYCODE_DPAD_UP -> moveSelection(up = true)
+				KeyEvent.KEYCODE_DPAD_DOWN -> moveSelection(up = false)
 				else -> return false
 			}
 			return true
@@ -1002,9 +1006,9 @@ class MainActivity : Activity(), CodeEditText.Listener {
 			KeyEvent.KEYCODE_N -> newDocument()
 			KeyEvent.KEYCODE_G -> promptGoToLine()
 			KeyEvent.KEYCODE_SLASH -> toggleComment()
-			KeyEvent.KEYCODE_D -> runEditOp(EditOps::duplicateLines)
-			KeyEvent.KEYCODE_RIGHT_BRACKET -> runEditOp { t, s, e -> EditOps.indent(t, s, e, editor.indentUnit) }
-			KeyEvent.KEYCODE_LEFT_BRACKET -> runEditOp { t, s, e -> EditOps.outdent(t, s, e, editor.indentUnit) }
+			KeyEvent.KEYCODE_D -> duplicateSelection()
+			KeyEvent.KEYCODE_RIGHT_BRACKET -> indentSelection()
+			KeyEvent.KEYCODE_LEFT_BRACKET -> outdentSelection()
 			KeyEvent.KEYCODE_P -> openPreview()
 			KeyEvent.KEYCODE_W -> current?.let(::closeDocument)
 			else -> return false
