@@ -101,4 +101,51 @@ class EditOpsTest {
 		assertFalse(EditOps.shouldSkipCloser(')', ']'))
 		assertFalse(EditOps.shouldSkipCloser('(', '('))
 	}
+
+	@Test
+	fun toggleCommentKeepsBareCursorOnItsCharacter() {
+		val text = "    val x = 1"
+		val cursor = text.indexOf("x")
+		val commented = EditOps.toggleComment(text, cursor, cursor, Languages.KOTLIN_JAVA)!!
+		val after = apply(text, commented)
+		assertEquals("    // val x = 1", after)
+		assertEquals(commented.selectionStart, commented.selectionEnd)
+		assertEquals('x', after[commented.selectionStart])
+
+		val back = EditOps.toggleComment(after, commented.selectionStart, commented.selectionStart, Languages.KOTLIN_JAVA)!!
+		assertEquals(text, apply(after, back))
+		assertEquals(cursor, back.selectionStart)
+		assertEquals(cursor, back.selectionEnd)
+	}
+
+	@Test
+	fun toggleCommentKeepsCursorInIndentAndInBlockComments() {
+		// A cursor inside the indentation stays put.
+		val inIndent = EditOps.toggleComment("    a", 2, 2, Languages.PYTHON)!!
+		assertEquals(2 to 2, inIndent.selectionStart to inIndent.selectionEnd)
+		// A cursor on the second line moves with that line's marker.
+		val text = "a\nbc"
+		val second = EditOps.toggleComment(text, 0, text.length, Languages.CSS)
+		assertEquals("/* a */\n/* bc */", apply(text, second))
+		val css = "/* a {} */"
+		val uncommented = EditOps.toggleComment(css, css.indexOf("{"), css.indexOf("{"), Languages.CSS)!!
+		assertEquals("a {}", apply(css, uncommented))
+		assertEquals(2, uncommented.selectionStart)
+	}
+
+	@Test
+	fun strictJsonHasNoCommentCommand() {
+		assertNull(EditOps.toggleComment("\"a\": 1", 0, 0, Languages.JSON, "package.json"))
+		assertNull(EditOps.toggleComment("{}", 0, 0, Languages.JSON, "app.webmanifest"))
+		assertEquals("// {}", apply("{}", EditOps.toggleComment("{}", 0, 0, Languages.JSON, "config.jsonc")))
+		assertEquals("// {}", apply("{}", EditOps.toggleComment("{}", 0, 0, Languages.JSON, "tsconfig.json")))
+		assertEquals("// {}", apply("{}", EditOps.toggleComment("{}", 0, 0, Languages.JSON, ".vscode/settings.json")))
+		assertEquals("// {}", apply("{}", EditOps.toggleComment("{}", 0, 0, Languages.JSON)))
+	}
+
+	@Test
+	fun outdentWithoutIndentChangesNothing() {
+		val result = EditOps.outdent("abc", 1, 1, "    ")
+		assertEquals(result.edit.removed, result.edit.inserted)
+	}
 }

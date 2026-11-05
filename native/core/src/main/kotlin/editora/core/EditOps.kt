@@ -34,9 +34,18 @@ object EditOps {
 	/**
 	 * Comments or uncomments the selected lines. Uses the language's line
 	 * comment, or wraps each line in its block comment (HTML, CSS).
-	 * Returns null for languages without comments.
+	 * Returns null for languages without comments, and for strict JSON files
+	 * ([fileName] ending in .json), whose parsers reject comments.
+	 * A bare cursor stays on the same character; a selection covers the changed lines.
 	 */
-	fun toggleComment(text: CharSequence, selStart: Int, selEnd: Int, language: Language): EditResult? {
+	fun toggleComment(
+		text: CharSequence,
+		selStart: Int,
+		selEnd: Int,
+		language: Language,
+		fileName: String? = null,
+	): EditResult? {
+		if (!Languages.allowsComments(language, fileName)) return null
 		val (start, end) = lineRange(text, selStart, selEnd)
 		val lines = text.substring(start, end).split('\n')
 		val lineMarker = language.lineComments.firstOrNull()
@@ -50,8 +59,11 @@ object EditOps {
 			if (lineMarker != null) body.startsWith(lineMarker) else body.startsWith(block!!.first) && body.trimEnd().endsWith(block.second)
 		}
 
-		val result = lines.map { line ->
-			if (line.isBlank()) return@map line
+		// Each line changes by a prefix replaced at [at]; block comments also change the line end.
+		class LineChange(val line: String, val at: Int, val removed: Int, val inserted: Int)
+
+		val changes = lines.map { line ->
+			if (line.isBlank()) return@map LineChange(line, 0, 0, 0)
 			if (allCommented) {
 				val lead = line.length - line.trimStart().length
 				val body = line.substring(lead)
@@ -60,14 +72,41 @@ object EditOps {
 				} else {
 					body.trimEnd().removePrefix(block!!.first).removeSuffix(block.second).removePrefix(" ").removeSuffix(" ")
 				}
-				line.substring(0, lead) + stripped
+				val prefixRemoved = if (lineMarker != null) {
+					body.length - stripped.length
+				} else {
+					block!!.first.length + if (body.removePrefix(block.first).startsWith(" ")) 1 else 0
+				}
+				LineChange(line.substring(0, lead) + stripped, lead, prefixRemoved, 0)
 			} else {
 				val head = line.substring(0, indent)
 				val body = line.substring(indent)
-				if (lineMarker != null) "$head$lineMarker $body" else "$head${block!!.first} $body ${block.second}"
+				val prefix = "${lineMarker ?: block!!.first} "
+				val newLine = if (lineMarker != null) "$head$prefix$body" else "$head$prefix$body ${block!!.second}"
+				LineChange(newLine, indent, 0, prefix.length)
 			}
-		}.joinToString("\n")
-		return replaceLines(text, start, end, result, start to start + result.length)
+		}
+		val result = changes.joinToString("\n") { it.line }
+		if (selStart != selEnd) return replaceLines(text, start, end, result, start to start + result.length)
+
+		// Bare cursor: find its line and shift it by that line's prefix change.
+		var oldLineStart = start
+		var newLineStart = start
+		for ((index, change) in changes.withIndex()) {
+			val oldLength = lines[index].length
+			if (selStart <= oldLineStart + oldLength) {
+				val column = selStart - oldLineStart
+				val moved = when {
+					column <= change.at -> column
+					else -> change.at + change.inserted + maxOf(0, column - change.at - change.removed)
+				}
+				val cursor = newLineStart + moved.coerceAtMost(change.line.length)
+				return replaceLines(text, start, end, result, cursor to cursor)
+			}
+			oldLineStart += oldLength + 1
+			newLineStart += change.line.length + 1
+		}
+		return replaceLines(text, start, end, result, selStart to selStart)
 	}
 
 	fun indent(text: CharSequence, selStart: Int, selEnd: Int, unit: String): EditResult {

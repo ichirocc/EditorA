@@ -25,9 +25,15 @@ SQL, HTML/XML, Markdown), undo/redo that treats one IME conversion as one step,
 find and replace (case, whole word, regex), go to line, LF/CRLF switching,
 line commands (toggle comment, indent/outdent, duplicate, move up/down),
 auto-closing brackets and quotes (single typed characters only, never during
-IME composition), Markdown and HTML preview (sandboxed WebView: no network, no file access,
+IME composition; typing a closer steps over it only when auto-close inserted it,
+and the pair undoes in one step), Markdown and HTML preview (sandboxed WebView: no network, no file access,
 JavaScript off unless enabled for HTML), auto-indent, a row of code keys
-above the keyboard, hardware-keyboard shortcuts (Ctrl+S/Z/Y/F/O/N/W), and
+above the keyboard, hardware-keyboard shortcuts (Ctrl+S save, Ctrl+Shift+S save as, Ctrl+Z/Y and
+Ctrl+Shift+Z undo/redo, Ctrl+F find, Ctrl+G go to line, Ctrl+O open, Ctrl+N new,
+Ctrl+W close, Ctrl+P preview, Ctrl+/ toggle comment, Ctrl+D duplicate lines,
+Ctrl+] / Ctrl+[ indent/outdent, Tab / Shift+Tab indent/outdent the selected
+lines, Alt+Up/Down move lines; toggle comment is unavailable in strict .json
+files, which do not allow comments), and
 restore of open tabs, including unsaved text, after the app is closed.
 
 Japanese legacy encodings are supported: on open the encoding is detected

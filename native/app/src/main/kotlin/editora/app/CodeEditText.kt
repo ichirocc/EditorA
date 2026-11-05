@@ -7,7 +7,9 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
+import android.text.Selection
 import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.BackgroundColorSpan
@@ -20,6 +22,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ScrollView
+import editora.core.AutoClosers
 import editora.core.Edit
 import editora.core.EditOps
 import editora.core.EditResult
@@ -45,6 +48,9 @@ class CodeEditText(context: Context) : EditText(context) {
 		fun onContentEdited()
 		fun onCursorMoved()
 		fun onShortcut(keyCode: Int, event: KeyEvent): Boolean
+
+		/** A line command (indent, comment, move…) changed the text; keep the cursor on screen. */
+		fun onLineCommandApplied()
 	}
 
 	var listener: Listener? = null
@@ -82,6 +88,43 @@ class CodeEditText(context: Context) : EditText(context) {
 	private var applyingHistory = false
 	private var pendingRemoved = ""
 
+	/** Closers auto-close inserted, so only those are stepped over. */
+	private val autoClosers = AutoClosers()
+
+	/** Set while the editor itself changes the text (line commands), so it is not paired. */
+	private var editingProgrammatically = false
+
+	/** From [pairingFilter] to the watcher: where the inserted closer is, and where the cursor goes. */
+	private var pendingCloser = -1
+	private var pendingCursor = -1
+
+	/**
+	 * Pairs brackets and quotes as part of the typed character's own edit, so
+	 * the pair is one undo step and nothing is inserted later. Typing a closer
+	 * that auto-close inserted right after the cursor inserts nothing and steps
+	 * over it. Only single typed characters, never during IME composition.
+	 */
+	private val pairingFilter = InputFilter { source, start, end, dest, dstart, dend ->
+		if (!autoClose || loadingText || applyingHistory || editingProgrammatically || end - start != 1) {
+			return@InputFilter null
+		}
+		if ((source is Spanned && BaseInputConnection.getComposingSpanStart(source) != -1) || isComposing()) {
+			return@InputFilter null
+		}
+		val typed = source[start]
+		val after = dest.getOrNull(dend)
+		if (dstart == dend && autoClosers.isTracked(dstart) && EditOps.shouldSkipCloser(typed, after)) {
+			autoClosers.consume(dstart)
+			// Nothing is inserted; move past the closer (an IME may already have done so).
+			mainHandler.post { if (selectionStart == dstart && selectionEnd == dstart) setSelection(dstart + 1) }
+			return@InputFilter ""
+		}
+		val closing = EditOps.autoCloseFor(typed, dest.getOrNull(dstart - 1), after) ?: return@InputFilter null
+		pendingCloser = dstart + 1
+		pendingCursor = dstart + 1
+		"$typed$closing"
+	}
+
 	private var newlineOffsets = IntArray(64)
 	private var newlineCount = 0
 	private var newlinesDirty = true
@@ -107,15 +150,27 @@ class CodeEditText(context: Context) : EditText(context) {
 			generation++
 			newlinesDirty = true
 			if (loadingText) return
+			autoClosers.onEdit(start, before, count)
+			if (pendingCloser >= 0) {
+				autoClosers.added(pendingCloser)
+				pendingCloser = -1
+			}
 			if (!applyingHistory) {
 				history.record(Edit(start, pendingRemoved, s.subSequence(start, start + count).toString()))
 				maybeAutoIndent(s, start, before, count)
-				maybeAutoClose(s, start, before, count)
 			}
 			listener?.onContentEdited()
 		}
 
 		override fun afterTextChanged(s: Editable) {
+			if (pendingCursor >= 0) {
+				// Put the cursor between the typed opener and its closer.
+				val cursor = pendingCursor.coerceIn(0, s.length)
+				pendingCursor = -1
+				Selection.setSelection(s, cursor)
+				// A key listener may move it after the closer once the edit returns; put it back.
+				mainHandler.post { if (selectionStart == cursor + 1 && selectionEnd == cursor + 1) setSelection(cursor) }
+			}
 			updateGutterWidth()
 			if (!loadingText) scheduleHighlight(HIGHLIGHT_DELAY_MS)
 		}
@@ -132,6 +187,7 @@ class CodeEditText(context: Context) : EditText(context) {
 		// limit); the workspace keeps the text instead.
 		isSaveEnabled = false
 		addTextChangedListener(watcher)
+		filters = arrayOf(pairingFilter)
 		setFontSizeSp(14f)
 		applyColors()
 	}
@@ -178,6 +234,7 @@ class CodeEditText(context: Context) : EditText(context) {
 		}
 		history = document.history
 		history.breakMerge()
+		autoClosers.clear()
 		language = document.language
 		val length = length()
 		setSelection(document.selectionStart.coerceIn(0, length), document.selectionEnd.coerceIn(0, length))
@@ -266,12 +323,7 @@ class CodeEditText(context: Context) : EditText(context) {
 
 	override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
 		if (keyCode == KeyEvent.KEYCODE_TAB && !event.isCtrlPressed && !event.isAltPressed) {
-			val content = text ?: return true
-			when {
-				event.isShiftPressed -> applyEditResult(EditOps.outdent(content, selectionStart, selectionEnd, indentUnit))
-				selectionStart != selectionEnd -> applyEditResult(EditOps.indent(content, selectionStart, selectionEnd, indentUnit))
-				else -> insertAtCursor(indentUnit)
-			}
+			if (event.isShiftPressed) outdentLines() else indentOrInsertTab()
 			return true
 		}
 		// Alt+Up/Down is not a shortcut key combination, so route it explicitly.
@@ -281,15 +333,53 @@ class CodeEditText(context: Context) : EditText(context) {
 		return super.onKeyDown(keyCode, event)
 	}
 
-	/** Applies a line command as one undo step and shows its resulting selection. */
-	fun applyEditResult(result: EditResult) {
+	/**
+	 * Runs a line command on the current selection (normalised so start <= end)
+	 * as one undo step. Every line command, from keys, menu or quick keys, goes
+	 * through here. Returns false when the command does not apply.
+	 */
+	fun runLineCommand(op: (CharSequence, Int, Int) -> EditResult?): Boolean {
+		val content = text ?: return false
+		val a = selectionStart.coerceAtLeast(0)
+		val b = selectionEnd.coerceAtLeast(0)
+		val result = op(content, minOf(a, b), maxOf(a, b)) ?: return false
+		applyEditResult(result)
+		listener?.onLineCommandApplied()
+		return true
+	}
+
+	/** Tab: indents the selected lines, or inserts one indent at a bare cursor. */
+	fun indentOrInsertTab() {
+		if (selectionStart != selectionEnd) {
+			runLineCommand { t, s, e -> EditOps.indent(t, s, e, indentUnit) }
+		} else {
+			insertAtCursor(indentUnit)
+		}
+	}
+
+	/** Shift+Tab: outdents the lines touched by the selection or cursor. */
+	fun outdentLines() {
+		runLineCommand { t, s, e -> EditOps.outdent(t, s, e, indentUnit) }
+	}
+
+	/** Applies a line command's result as one undo step and shows its resulting selection. */
+	private fun applyEditResult(result: EditResult) {
 		val editable = text ?: return
 		val edit = result.edit
 		val end = (edit.start + edit.removed.length).coerceAtMost(editable.length)
 		if (edit.start > end) return
-		history.breakMerge()
-		editable.replace(edit.start, end, edit.inserted)
-		history.breakMerge()
+		// Nothing changes (outdent with no indent, comment on blank lines): leave the
+		// document clean and the undo history untouched.
+		if (edit.removed != edit.inserted) {
+			history.breakMerge()
+			editingProgrammatically = true
+			try {
+				editable.replace(edit.start, end, edit.inserted)
+			} finally {
+				editingProgrammatically = false
+			}
+			history.breakMerge()
+		}
 		val length = length()
 		setSelection(result.selectionStart.coerceIn(0, length), result.selectionEnd.coerceIn(0, length))
 	}
@@ -442,28 +532,6 @@ class CodeEditText(context: Context) : EditText(context) {
 			val editable = text ?: return@post
 			if (start < editable.length && editable[start] == '\n' && selectionEnd == start + 1) {
 				editable.insert(start + 1, indent)
-			}
-		}
-	}
-
-	/** Pairs brackets and quotes for single typed characters (never during IME composition). */
-	private fun maybeAutoClose(s: CharSequence, start: Int, before: Int, count: Int) {
-		if (!autoClose || count != 1 || before != 0 || isComposing()) return
-		val typed = s[start]
-		val after = s.getOrNull(start + 1)
-		if (EditOps.shouldSkipCloser(typed, after)) {
-			mainHandler.post {
-				val editable = text ?: return@post
-				if (selectionEnd == start + 1 && editable.getOrNull(start + 1) == typed) editable.delete(start + 1, start + 2)
-			}
-			return
-		}
-		val closing = EditOps.autoCloseFor(typed, s.getOrNull(start - 1), after) ?: return
-		mainHandler.post {
-			val editable = text ?: return@post
-			if (selectionEnd == start + 1 && editable.getOrNull(start) == typed) {
-				editable.insert(start + 1, closing.toString())
-				setSelection(start + 1)
 			}
 		}
 	}
