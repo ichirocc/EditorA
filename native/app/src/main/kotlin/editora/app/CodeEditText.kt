@@ -10,6 +10,7 @@ import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
 import android.text.Selection
+import android.text.Spannable
 import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.BackgroundColorSpan
@@ -108,7 +109,7 @@ class CodeEditText(context: Context) : EditText(context) {
 		if (!autoClose || loadingText || applyingHistory || editingProgrammatically || end - start != 1) {
 			return@InputFilter null
 		}
-		if ((source is Spanned && BaseInputConnection.getComposingSpanStart(source) != -1) || isComposing()) {
+		if ((source is Spannable && BaseInputConnection.getComposingSpanStart(source) != -1) || isComposing()) {
 			return@InputFilter null
 		}
 		val typed = source[start]
