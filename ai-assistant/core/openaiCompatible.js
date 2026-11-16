@@ -7,7 +7,9 @@ import { TOOLS, ToolInputError } from "./tools.js";
  *
  * Replies stream over `fetch` when the provider allows browser requests.
  * If `fetch` fails before any response (a provider without CORS headers),
- * requests go through the native HTTP plugin instead, without streaming.
+ * requests go through the native HTTP plugin instead. They still ask for a
+ * stream (some models only answer that way), which the plugin hands over
+ * whole once it ends.
  */
 
 const MAX_ROUNDS = 60;
@@ -276,8 +278,8 @@ function addChunk(reply, chunk, onEvent) {
  * @param {number[]} [options.retryDelays] pauses (ms) before each retry of an
  *   overloaded or rate-limited request
  * @param {number} [options.noAnswerMs] how long a request may receive
- *   nothing before it is given up; without streaming, the whole reply has
- *   to arrive within it
+ *   nothing before it is given up; over native HTTP, which hands the stream
+ *   over whole, the whole reply has to arrive within it
  * @param {string[]} [options.fallbackModels] models that take over, in
  *   order, for the rest of a turn when the chosen one is unavailable, out
  *   of quota, overloaded or silent
@@ -351,12 +353,20 @@ export function createOpenAICompatibleAdapter({
 
 			const text = await nativePost(
 				url,
-				headers,
-				JSON.stringify({ ...body, stream: false }),
+				{ ...headers, Accept: "text/event-stream" },
+				JSON.stringify({ ...body, stream: true }),
 				watch.signal,
 			);
 			useNative = true;
-			addChunk(reply, JSON.parse(text), onEvent);
+			if (text.trimStart().startsWith("{")) {
+				// A server that does not stream answers with one response.
+				addChunk(reply, JSON.parse(text), onEvent);
+			} else {
+				const stream = new Response(text).body;
+				for await (const chunk of readEvents(stream, () => {})) {
+					addChunk(reply, chunk, onEvent);
+				}
+			}
 			return reply;
 		} catch (error) {
 			// Given up for lack of an answer: say so, not "aborted".
