@@ -26,8 +26,6 @@
  * @property {boolean} [keyOptional] works without an API key
  * @property {string[]} [fallbackModels] models that answer instead when the
  *   chosen one cannot
- * @property {object} [nonStreamingParams] extra request fields for requests
- *   that do not stream
  */
 
 /**@type {Provider[]} */
@@ -91,10 +89,6 @@ export const PROVIDERS = [
 		kind: "openai",
 		group: "vendor",
 		baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-		// The open Qwen3 models think by default, and thinking works only when
-		// streaming: without it they answer "enable_thinking only support
-		// stream call". The editor's native requests do not stream.
-		nonStreamingParams: { enable_thinking: false },
 	},
 	{
 		id: "zai",
@@ -262,7 +256,6 @@ export async function createModelAdapter({
 		nativeGet,
 		nativePost,
 		fallbackModels: provider.fallbackModels,
-		nonStreamingParams: provider.nonStreamingParams,
 		// Servers that need no key mostly run on the user's own machine,
 		// where reading a long prompt can take minutes before any answer.
 		...(provider.keyOptional ? { noAnswerMs: LOCAL_NO_ANSWER_MS } : {}),

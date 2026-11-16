@@ -68,12 +68,6 @@ describe("AI assistant providers", () => {
 
 	describe("adapters", () => {
 		afterEach(() => vi.unstubAllGlobals());
-		const reply = (content) =>
-			JSON.stringify({
-				choices: [
-					{ message: { role: "assistant", content }, finish_reason: "stop" },
-				],
-			});
 		const turn = (adapter) =>
 			adapter.runTurn({
 				system: "s",
@@ -102,26 +96,6 @@ describe("AI assistant providers", () => {
 			});
 			await turn(adapter);
 			expect(models).toEqual(["gemini-3.1-pro-preview", "gemini-3.5-flash"]);
-		});
-
-		it("turn Qwen's thinking off where requests do not stream", async () => {
-			vi.stubGlobal(
-				"fetch",
-				vi.fn(async () => {
-					throw new TypeError("Failed to fetch");
-				}),
-			);
-			const nativePost = vi.fn(async () => reply("Hi."));
-			const adapter = await createModelAdapter({
-				provider: getProvider("qwen"),
-				model: "qwen3-32b",
-				apiKey: "k",
-				nativePost,
-			});
-			await turn(adapter);
-			expect(JSON.parse(nativePost.mock.calls[0][2]).enable_thinking).toBe(
-				false,
-			);
 		});
 	});
 

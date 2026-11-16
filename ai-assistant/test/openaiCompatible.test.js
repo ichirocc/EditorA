@@ -49,6 +49,18 @@ function scriptedFetch(responses) {
 
 const userTurn = (adapter) => [adapter.userMessage(["<app_state>…", "fix it"])];
 
+/** A reply from a server that does not stream, as native HTTP returns it. */
+const nativeReply = (content) =>
+	JSON.stringify({
+		choices: [
+			{ message: { role: "assistant", content }, finish_reason: "stop" },
+		],
+	});
+
+/** A whole stream, as native HTTP hands it over once it has ended. */
+const nativeStream = (chunks) =>
+	`: keep-alive\n\n${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`;
+
 /**
  * A fetch whose streamed reply sends `chunks`, one every `everyMs`. Without
  * `end`, the stream then stays open without sending more. Like a real
@@ -475,20 +487,15 @@ describe("OpenAI-compatible adapter", () => {
 		}
 	});
 
-	it("falls back to native HTTP without streaming when fetch is blocked", async () => {
+	it("falls back to native HTTP when fetch is blocked, still asking for a stream", async () => {
 		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
 		const nativePost = vi.fn(async () =>
-			JSON.stringify({
-				choices: [
-					{
-						message: {
-							role: "assistant",
-							content: "Hello from native.",
-						},
-						finish_reason: "stop",
-					},
-				],
-			}),
+			nativeStream([
+				delta({ role: "assistant", reasoning_content: "Greet." }),
+				delta({ content: "Hello " }),
+				delta({ content: "from native." }),
+				delta({}, "stop"),
+			]),
 		);
 		const adapter = createOpenAICompatibleAdapter({
 			baseUrl: "https://x.test/v1",
@@ -509,44 +516,39 @@ describe("OpenAI-compatible adapter", () => {
 
 		const [url, headers, body] = nativePost.mock.calls[0];
 		expect(url).toBe("https://x.test/v1/chat/completions");
-		expect(headers.Authorization).toBe("Bearer k");
-		expect(JSON.parse(body).stream).toBe(false);
-		expect(events[0]).toEqual({ type: "text", delta: "Hello from native." });
+		expect(headers).toMatchObject({
+			Authorization: "Bearer k",
+			Accept: "text/event-stream",
+		});
+		// Models that only answer in a stream (and think only then) work too.
+		expect(JSON.parse(body).stream).toBe(true);
+		expect(events.slice(0, 3)).toEqual([
+			{ type: "thinking", delta: "Greet." },
+			{ type: "text", delta: "Hello " },
+			{ type: "text", delta: "from native." },
+		]);
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: "Hello from native.",
+			reasoning_content: "Greet.",
+		});
 		// Once blocked, later requests go straight to native HTTP.
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(nativePost).toHaveBeenCalledTimes(2);
 	});
 
-	it("adds the provider's extra fields to requests that do not stream", async () => {
-		const { fetch, bodies } = scriptedFetch([new TypeError("Failed to fetch")]);
-		const nativePost = vi.fn(async () =>
-			JSON.stringify({
-				choices: [
-					{
-						message: { role: "assistant", content: "Hi." },
-						finish_reason: "stop",
-					},
-				],
-			}),
-		);
+	it("reads the one response of a server that does not stream", async () => {
+		const { fetch } = scriptedFetch([new TypeError("Failed to fetch")]);
 		const adapter = createOpenAICompatibleAdapter({
 			baseUrl: "https://x.test/v1",
 			apiKey: "k",
-			model: "qwen3-32b",
+			model: "m",
 			fetch,
-			nativePost,
-			nonStreamingParams: { enable_thinking: false },
+			nativePost: vi.fn(async () => `\n${nativeReply("Hi.")}`),
 		});
-		await adapter.runTurn({
-			system: "s",
-			messages: userTurn(adapter),
-			executeTool: vi.fn(),
-		});
-		expect(bodies[0].json).not.toHaveProperty("enable_thinking");
-		expect(JSON.parse(nativePost.mock.calls[0][2])).toMatchObject({
-			enable_thinking: false,
-			stream: false,
-		});
+		const messages = userTurn(adapter);
+		await adapter.runTurn({ system: "s", messages, executeTool: vi.fn() });
+		expect(messages.at(-1)).toEqual({ role: "assistant", content: "Hi." });
 	});
 
 	it("does not fall back when the user aborted", async () => {
