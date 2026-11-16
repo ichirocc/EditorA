@@ -60,6 +60,8 @@ let busy = false;
 let abortController = null;
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let watchTimer;
+/** An automatic step is running (runAutopilot). */
+let autopiloting = false;
 /** @type {Set<string>} paths whose diff is expanded */
 const expanded = new Set();
 
@@ -988,6 +990,7 @@ function renderAutopilot() {
  * @param {HTMLInputElement} $input
  */
 async function setAutopilot(key, $input) {
+	const current = session;
 	const on = $input.checked;
 	if (key === "merge" && on) {
 		// Merging without asking is the user's call, once per pull request.
@@ -995,17 +998,18 @@ async function setAutopilot(key, $input) {
 			strings["ai auto merge"],
 			dialogHtml(
 				strings["ai auto merge confirm"]
-					.replace("{number}", session.pr.number)
-					.replace("{branch}", session.baseBranch),
+					.replace("{number}", current.pr.number)
+					.replace("{branch}", current.baseBranch),
 			),
 			true,
 		);
-		if (!ok) {
+		// The pull request may have been merged while the dialog was open.
+		if (!ok || session !== current || !current.pr || current.pr.merged) {
 			$input.checked = false;
 			return;
 		}
 	}
-	session.setAutopilot({ [key]: on });
+	current.setAutopilot({ [key]: on });
 	renderActions();
 	runAutopilot();
 }
@@ -1015,7 +1019,18 @@ async function setAutopilot(key, $input) {
  * fixing failed CI, or merging once it has passed.
  */
 async function runAutopilot() {
-	if (busy || !session) return;
+	if (busy || autopiloting || !session) return;
+	// The steps below end by checking CI again, which comes back here.
+	autopiloting = true;
+	try {
+		await runAutopilotStep();
+	} finally {
+		autopiloting = false;
+	}
+}
+
+/** The step of runAutopilot that is due, if any. */
+async function runAutopilotStep() {
 	const step = session.nextAutopilotStep();
 	if (step === "fix") {
 		const failed = session.readiness.checks.filter(

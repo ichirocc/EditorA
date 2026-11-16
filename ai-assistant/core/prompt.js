@@ -59,6 +59,15 @@ export function buildStateNote({ workBranch, stagedPaths, pr, merge = null }) {
 }
 
 /**
+ * Note before a request the app sends by itself to fix failed CI. Without
+ * it, the system prompt's "reply with a plan first" for non-trivial changes
+ * can end the turn without a push, and nobody is there to agree.
+ */
+export const AUTO_FIX_NOTE = `<app_state>
+The app sent the next request by itself: the user turned on automatic CI fixes for this pull request and is not reading along. Do not reply with a plan for the user to agree to; fix the cause and push the fix with push_changes in this turn.
+</app_state>`;
+
+/**
  * Failed CI checks described for the assistant.
  * @param {{name:string, summary:string, annotations:any[], log:string|null}[]} details
  * @returns {string}

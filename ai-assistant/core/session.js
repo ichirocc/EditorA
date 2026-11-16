@@ -2,6 +2,7 @@ import ChangeSet from "./changeSet.js";
 import { hasConflictMarkers, merge3 } from "./merge3.js";
 import { evaluateMergeReadiness } from "./mergeGate.js";
 import {
+	AUTO_FIX_NOTE,
 	buildCiFailureReport,
 	buildStateNote,
 	buildStatusReport,
@@ -248,6 +249,7 @@ export default class AssistantSession {
 				: null,
 		});
 		if (note !== this.#lastStateNote) texts.push(note);
+		if (autoFix) texts.push(AUTO_FIX_NOTE);
 		texts.push(text);
 
 		const before = this.messages.length;
@@ -554,8 +556,13 @@ export default class AssistantSession {
 			if (!autopilot.fix || this.#fixedHead === pr.head.sha) return null;
 			return autopilot.fixes < MAX_AUTO_FIXES ? "fix" : "give up";
 		}
-		// Only what CI has checked is merged: never without checks.
-		if (autopilot.merge && readiness.ready && !readiness.warnings.length) {
+		// Only what CI has checked is merged: never without a check that ran.
+		if (
+			autopilot.merge &&
+			readiness.ready &&
+			!readiness.warnings.length &&
+			readiness.checks.some((check) => !check.skipped)
+		) {
 			return "merge";
 		}
 		return null;
@@ -651,11 +658,31 @@ export default class AssistantSession {
 	 */
 	async #approved(request) {
 		// The user let the app fix failed CI by itself, push included.
-		if (this.#autoFixing && this.autopilot.fix && request.action === "push") {
+		if (
+			this.#autoFixing &&
+			this.autopilot.fix &&
+			request.action === "push" &&
+			this.#checksLeftAlone()
+		) {
 			return true;
 		}
 		if (!this.#confirm) return false;
 		return !!(await this.#confirm(request));
+	}
+
+	/**
+	 * Whether the staged changes leave what CI checks alone: they neither
+	 * touch .github/ (the workflows) nor delete files. Otherwise an
+	 * automatic fix could make CI pass by checking less, so its push is
+	 * shown to the user first.
+	 */
+	#checksLeftAlone() {
+		return this.changeSet
+			.list()
+			.every(
+				(change) =>
+					change.content !== null && !change.path.startsWith(".github/"),
+			);
 	}
 
 	async #pushTool({ message }) {

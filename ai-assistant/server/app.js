@@ -394,11 +394,16 @@ export function createAssistantApp({
 		const text = String(body.text || "").trim();
 		if (!text) throw new HttpError(400, "The message is empty.");
 		if (busy) throw new HttpError(409, "The assistant is busy.");
+		const autoFix = body.autoFix === true;
 		busy = true;
 		try {
 			// A merged session is finished; the next request starts a new one.
 			if (session?.pr?.merged) resetSession();
 			await ensureSession();
+			// Refused before it reaches the chat: the page's state may be old.
+			if (autoFix && session.nextAutopilotStep() !== "fix") {
+				throw new HttpError(409, "There is no failed CI run to fix by itself.");
+			}
 		} catch (error) {
 			busy = false;
 			throw error;
@@ -417,7 +422,7 @@ export function createAssistantApp({
 			if (!res.writableFinished) controller?.abort();
 		});
 
-		if (body.autoFix === true && session.nextAutopilotStep() === "fix") {
+		if (autoFix) {
 			addLog({
 				kind: "note",
 				code: "auto fixing",
@@ -437,7 +442,7 @@ export function createAssistantApp({
 			await session.send(text, {
 				signal,
 				confirm: (request) => askApproval(request, signal, emit),
-				autoFix: body.autoFix === true,
+				autoFix,
 				onEvent(event) {
 					if (event.type === "text") {
 						reply ??= addLog({ kind: "assistant", text: "" });
@@ -572,6 +577,15 @@ export function createAssistantApp({
 						{
 							code: "head changed",
 						},
+					);
+				}
+				// Merging without asking only as the user turned on, and only
+				// when the session would (a check ran and passed).
+				if (body.auto && s.nextAutopilotStep() !== "merge") {
+					throw new HttpError(
+						409,
+						"The pull request is not ready to merge by itself.",
+						{ code: "blocked", readiness: s.readiness },
 					);
 				}
 				try {

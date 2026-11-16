@@ -454,6 +454,13 @@ describe("standalone assistant server", () => {
 			const after = (await call("GET", "/api/state")).body.session;
 			expect(after.autopilot.merge).toBe(false);
 			expect(after.autopilotStep).toBeNull();
+			// A page with an old state does not merge by itself once it is off.
+			const off = await call("POST", "/api/session/merge", {
+				headSha: "c1",
+				auto: true,
+			});
+			expect(off.status).toBe(409);
+			expect(github.mergePullRequest).toHaveBeenCalledTimes(1);
 
 			await call("POST", "/api/session/autopilot", { merge: true });
 			const merged = await call("POST", "/api/session/merge", {
@@ -464,6 +471,24 @@ describe("standalone assistant server", () => {
 				code: "auto merged",
 				params: { number: 7, branch: "main" },
 			});
+		});
+
+		it("refuses an automatic fix with nothing to fix, before the chat shows it", async () => {
+			await openPullRequest();
+			const refused = await chat("CI failed: tests. Fix it and push", {
+				autoFix: true,
+			});
+			expect(refused.status).toBe(409);
+			expect(refused.body.error).toBe(
+				"There is no failed CI run to fix by itself.",
+			);
+			const { log } = (await call("GET", "/api/state")).body;
+			expect(log.map((entry) => entry.text)).not.toContain(
+				"CI failed: tests. Fix it and push",
+			);
+			expect(github.commitToBranch).toHaveBeenCalledTimes(1);
+			// Not busy afterwards.
+			expect((await call("POST", "/api/session/refresh")).status).toBe(200);
 		});
 
 		it("needs an open pull request", async () => {

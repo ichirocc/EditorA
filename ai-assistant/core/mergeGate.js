@@ -20,8 +20,9 @@ const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
  * @property {boolean} pending something is still running or being computed
  * @property {{code:BlockerCode, names?:string[]}[]} blockers reasons the merge is refused
  * @property {"no checks"[]} warnings things the user must acknowledge before merging
- * @property {{name:string, state:"success"|"pending"|"failure", summary?:string, checkRunId?:number, actions?:boolean}[]} checks
- *   failed check runs carry their id; `actions` marks GitHub Actions jobs
+ * @property {{name:string, state:"success"|"pending"|"failure", skipped?:boolean, summary?:string, checkRunId?:number, actions?:boolean}[]} checks
+ *   failed check runs carry their id; `actions` marks GitHub Actions jobs;
+ *   `skipped` marks a passing check run that was skipped
  */
 
 /**
@@ -68,7 +69,12 @@ export function evaluateMergeReadiness({
 		if (run.status !== "completed") {
 			checks.push({ name: run.name, state: "pending" });
 		} else if (PASSING_CONCLUSIONS.has(run.conclusion)) {
-			checks.push({ name: run.name, state: "success" });
+			checks.push({
+				name: run.name,
+				state: "success",
+				// Did not block the merge, but checked nothing either.
+				...(run.conclusion === "skipped" ? { skipped: true } : {}),
+			});
 		} else {
 			const summary = [run.output?.title, run.output?.summary]
 				.filter(Boolean)

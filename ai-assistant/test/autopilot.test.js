@@ -177,6 +177,35 @@ describe("steps the app takes by itself for a pull request", () => {
 		expect(session.autopilot.fixes).toBe(0);
 	});
 
+	it.each([
+		[
+			"changes a workflow",
+			[
+				"write_file",
+				{ path: ".github/workflows/ci.yml", content: "on: push\n" },
+			],
+		],
+		["deletes a file", ["delete_file", { path: "a.js" }]],
+	])("asks before an automatic fix's push that %s", async (_name, change) => {
+		const github = fakeGitHub();
+		const { session, calls, ci } = await sessionWithPullRequest(github);
+		session.setAutopilot({ fix: true });
+		await ci(FAILED);
+		const pushes = github.commitToBranch.mock.calls.length;
+		const confirm = vi.fn(async () => false);
+		calls.push(change, ["push_changes", { message: "Fix CI" }]);
+
+		await session.send("CI failed. Fix it and push.", {
+			autoFix: true,
+			confirm,
+		});
+		// Making CI pass by checking less is for the user to see first.
+		expect(confirm.mock.calls.map(([request]) => request.action)).toEqual([
+			"push",
+		]);
+		expect(github.commitToBranch).toHaveBeenCalledTimes(pushes);
+	});
+
 	it("still asks before any other step in an automatic fix", async () => {
 		const github = fakeGitHub();
 		const { session, calls, ci } = await sessionWithPullRequest(github);
@@ -250,9 +279,31 @@ describe("steps the app takes by itself for a pull request", () => {
 		await session.refreshStatus();
 		expect(session.nextAutopilotStep()).toBe("merge");
 
+		// Skipped checks did not check the change either.
+		await ci([{ name: "build", status: "completed", conclusion: "skipped" }]);
+		expect(session.readiness).toMatchObject({ ready: true, warnings: [] });
+		expect(session.nextAutopilotStep()).toBeNull();
+		await ci([
+			...PASSED,
+			{ name: "docs", status: "completed", conclusion: "skipped" },
+		]);
+		expect(session.nextAutopilotStep()).toBe("merge");
+
 		await session.merge({ headSha: session.pr.head.sha });
 		expect(github.mergePullRequest).toHaveBeenCalledTimes(1);
 		expect(session.nextAutopilotStep()).toBeNull();
+	});
+
+	it("tells the model that the app sent the fix request by itself", async () => {
+		const github = fakeGitHub();
+		const { session, ci } = await sessionWithPullRequest(github);
+		session.setAutopilot({ fix: true });
+		await ci(FAILED);
+
+		await session.send("CI failed. Fix it and push.", { autoFix: true });
+		const sent = session.messages.findLast(({ role }) => role === "user");
+		expect(sent.content).toContain("automatic CI fixes");
+		expect(sent.content.endsWith("CI failed. Fix it and push.")).toBe(true);
 	});
 
 	it("stops once someone else pushed to the branch", async () => {
