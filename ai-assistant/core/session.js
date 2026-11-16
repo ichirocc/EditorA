@@ -2,6 +2,7 @@ import ChangeSet from "./changeSet.js";
 import { hasConflictMarkers, merge3 } from "./merge3.js";
 import { evaluateMergeReadiness } from "./mergeGate.js";
 import {
+	AUTO_FIX_NOTE,
 	buildCiFailureReport,
 	buildStateNote,
 	buildStatusReport,
@@ -17,6 +18,8 @@ const READ_CONCURRENCY = 6;
 const CI_START_GRACE_MS = 2 * 60_000;
 const DECLINED =
 	"The user declined this step in the app. Do not try it again unless they ask.";
+/** Failed CI runs in a row that the assistant fixes by itself, at most. */
+export const MAX_AUTO_FIXES = 3;
 
 /**
  * Merges one file's two versions against their common ancestor.
@@ -77,6 +80,15 @@ async function forEachLimited(items, limit, fn) {
  */
 
 /**
+ * Steps the user let the app take by itself for the open pull request.
+ * @typedef {object} Autopilot
+ * @property {boolean} fix when CI fails, the assistant fixes it and pushes
+ * @property {boolean} merge once CI has passed and nothing blocks the
+ *   merge, the pull request is merged
+ * @property {number} fixes automatic fixes since CI last passed
+ */
+
+/**
  * One briefing → edit → push → pull request → merge cycle against a
  * repository branch.
  *
@@ -84,8 +96,10 @@ async function forEachLimited(items, limit, fn) {
  * work branch, committing, opening the pull request, merging) is a method
  * the UI calls on an explicit user action, or a tool the assistant calls
  * when the user asks in the chat; the tool asks the host to confirm with
- * the user first. `merge()` re-checks the merge gate right before merging
- * the exact head it checked.
+ * the user first. The only exceptions are the ones the user turns on for a
+ * pull request (setAutopilot): pushing an automatic CI fix, and merging
+ * once CI has passed. `merge()` re-checks the merge gate right before
+ * merging the exact head it checked.
  */
 export default class AssistantSession {
 	/**@type {import("./github.js").GitHubClient} */
@@ -107,6 +121,10 @@ export default class AssistantSession {
 	#executeTool;
 	/**@type {ConfirmAction|null} approval for the turn that is running */
 	#confirm = null;
+	/**@type {boolean} the running turn is an automatic CI fix */
+	#autoFixing = false;
+	/**@type {string|null} head whose failed CI was last sent to be fixed */
+	#fixedHead = null;
 
 	/**@type {{commitSha:string, treeSha:string}|null} head the assistant reads from */
 	head = null;
@@ -128,6 +146,8 @@ export default class AssistantSession {
 	 * @type {{tip:{commitSha:string, treeSha:string}, baseSha:string, conflicted:string[]}|null}
 	 */
 	merging = null;
+	/**@type {Autopilot} */
+	autopilot = { fix: false, merge: false, fixes: 0 };
 
 	/**
 	 * @param {object} options
@@ -200,11 +220,20 @@ export default class AssistantSession {
 	 * @param {AbortSignal} [options.signal]
 	 * @param {ConfirmAction} [options.confirm] asks the user before a GitHub
 	 *   step the assistant takes; without it, the assistant cannot take any
+	 * @param {boolean} [options.autoFix] the app sends this to fix failed CI
+	 *   by itself (see nextAutopilotStep): its push needs no confirmation
 	 */
-	async send(text, { onEvent, signal, confirm } = {}) {
+	async send(text, { onEvent, signal, confirm, autoFix = false } = {}) {
 		if (!this.head) throw new Error("Session has not started.");
 		if (this.pr?.merged) {
 			throw new Error("This session is merged. Start a new session.");
+		}
+		if (autoFix) {
+			if (this.nextAutopilotStep() !== "fix") {
+				throw new Error("There is no failed CI run to fix by itself.");
+			}
+			this.#fixedHead = this.pr.head.sha;
+			this.autopilot.fixes++;
 		}
 
 		const texts = [];
@@ -220,11 +249,13 @@ export default class AssistantSession {
 				: null,
 		});
 		if (note !== this.#lastStateNote) texts.push(note);
+		if (autoFix) texts.push(AUTO_FIX_NOTE);
 		texts.push(text);
 
 		const before = this.messages.length;
 		this.messages.push(this.ai.userMessage(texts));
 		this.#confirm = confirm || null;
+		this.#autoFixing = autoFix;
 		try {
 			await this.ai.runTurn({
 				system: this.system,
@@ -241,6 +272,7 @@ export default class AssistantSession {
 			throw error;
 		} finally {
 			this.#confirm = null;
+			this.#autoFixing = false;
 		}
 		if (this.messages.length > before) {
 			this.#lastStateNote = note;
@@ -477,7 +509,63 @@ export default class AssistantSession {
 			body,
 		});
 		this.readiness = null;
+		this.autopilot = { fix: false, merge: false, fixes: 0 };
+		this.#fixedHead = null;
 		return this.pr;
+	}
+
+	/** Failed CI runs in a row fixed by itself, at most (MAX_AUTO_FIXES). */
+	get maxAutoFixes() {
+		return MAX_AUTO_FIXES;
+	}
+
+	/**
+	 * Turns the steps the app takes by itself for the open pull request on
+	 * or off. Turning fixes on again starts a new count.
+	 * @param {{fix?:boolean, merge?:boolean}} choices
+	 */
+	setAutopilot({ fix, merge }) {
+		if (!this.pr || this.pr.merged) {
+			throw new Error("There is no open pull request.");
+		}
+		if (fix !== undefined) {
+			if (fix && !this.autopilot.fix) this.autopilot.fixes = 0;
+			this.autopilot.fix = !!fix;
+		}
+		if (merge !== undefined) this.autopilot.merge = !!merge;
+	}
+
+	/**
+	 * What the app does by itself after a status refresh, as the user set
+	 * for the pull request: "fix" sends the failed CI to the assistant
+	 * (send() with autoFix), "merge" merges, and "give up" means the
+	 * automatic fixes ran out (MAX_AUTO_FIXES) and are to be turned off.
+	 * Nothing happens while CI runs, with unpushed work, or once someone
+	 * else pushed to the branch.
+	 * @returns {"fix"|"merge"|"give up"|null}
+	 */
+	nextAutopilotStep() {
+		const { pr, readiness, autopilot } = this;
+		if (!pr || pr.merged || pr.state !== "open") return null;
+		if (!readiness || readiness.pending) return null;
+		if (this.changeSet.size || this.merging) return null;
+		if (readiness.blockers.some(({ code }) => code === "head changed")) {
+			return null;
+		}
+		if (readiness.checks.some((check) => check.state === "failure")) {
+			if (!autopilot.fix || this.#fixedHead === pr.head.sha) return null;
+			return autopilot.fixes < MAX_AUTO_FIXES ? "fix" : "give up";
+		}
+		// Only what CI has checked is merged: never without a check that ran.
+		if (
+			autopilot.merge &&
+			readiness.ready &&
+			!readiness.warnings.length &&
+			readiness.checks.some((check) => !check.skipped)
+		) {
+			return "merge";
+		}
+		return null;
 	}
 
 	/**
@@ -524,6 +612,10 @@ export default class AssistantSession {
 		}
 		if (this.changeSet.size || this.merging) block("unpushed");
 		this.readiness = readiness;
+		const failed = readiness.checks.some((check) => check.state === "failure");
+		if (!readiness.pending && readiness.checks.length && !failed) {
+			this.autopilot.fixes = 0;
+		}
 		return readiness;
 	}
 
@@ -565,8 +657,32 @@ export default class AssistantSession {
 	 * @param {ActionRequest} request
 	 */
 	async #approved(request) {
+		// The user let the app fix failed CI by itself, push included.
+		if (
+			this.#autoFixing &&
+			this.autopilot.fix &&
+			request.action === "push" &&
+			this.#checksLeftAlone()
+		) {
+			return true;
+		}
 		if (!this.#confirm) return false;
 		return !!(await this.#confirm(request));
+	}
+
+	/**
+	 * Whether the staged changes leave what CI checks alone: they neither
+	 * touch .github/ (the workflows) nor delete files. Otherwise an
+	 * automatic fix could make CI pass by checking less, so its push is
+	 * shown to the user first.
+	 */
+	#checksLeftAlone() {
+		return this.changeSet
+			.list()
+			.every(
+				(change) =>
+					change.content !== null && !change.path.startsWith(".github/"),
+			);
 	}
 
 	async #pushTool({ message }) {

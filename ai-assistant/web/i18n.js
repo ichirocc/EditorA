@@ -26,6 +26,14 @@ const STRINGS = {
 		fixCi: "Ask the assistant to fix",
 		fixCiMessage:
 			"CI failed on the pull request: {names}. Find the cause and fix it.",
+		autoFix: "Fix failed CI by itself",
+		autoMerge: "Merge once CI passes",
+		autoMergeConfirm:
+			"Merge pull request #{number} into {branch} without asking, as soon as CI has passed and nothing blocks the merge?",
+		autoFixMessage:
+			"CI failed on the pull request: {names}. Find the cause, fix it and push the fix.",
+		autoFixGaveUp:
+			"CI still fails after {max} automatic fixes, so automatic fixing is off. Check the pull request.",
 		syncBase: "Merge in {branch}",
 		mergingBase:
 			"Merging the latest {branch} into this branch. Review the changes and push to finish.",
@@ -39,6 +47,10 @@ const STRINGS = {
 		"note.pushed": "Pushed {sha} to {branch}.",
 		"note.pr opened": "Opened pull request #{number}.",
 		"note.merged": "Merged pull request #{number} into {branch}.",
+		"note.auto merged":
+			"CI passed: merged pull request #{number} into {branch} by itself.",
+		"note.auto fixing":
+			"CI failed: the assistant fixes it by itself ({count} of {max}).",
 		"note.up to date": "The branch already has the latest {branch}.",
 		"note.merging base": "Merged the latest {branch} in. Conflicts: {paths}",
 		"note.merging base clean":
@@ -130,6 +142,14 @@ const STRINGS = {
 		fixCi: "AIに修正を依頼",
 		fixCiMessage:
 			"プルリクエストのCIが失敗しました: {names}。原因を調べて修正してください。",
+		autoFix: "CIが失敗したら自動で直す",
+		autoMerge: "CIが通ったら自動でマージ",
+		autoMergeConfirm:
+			"CIが通り、マージを妨げるものがなくなったら、確認なしでプルリクエスト #{number} を {branch} にマージします。よろしいですか？",
+		autoFixMessage:
+			"プルリクエストのCIが失敗しました: {names}。原因を調べて修正し、プッシュしてください。",
+		autoFixGaveUp:
+			"自動修正を {max} 回試してもCIが通らないため、自動修正をオフにしました。プルリクエストを確認してください。",
 		syncBase: "{branch} を取り込む",
 		mergingBase:
 			"最新の {branch} をこのブランチに取り込み中です。変更を確認してプッシュすると完了します。",
@@ -142,6 +162,10 @@ const STRINGS = {
 		"note.pushed": "{branch} に {sha} をプッシュしました。",
 		"note.pr opened": "プルリクエスト #{number} を作成しました。",
 		"note.merged": "プルリクエスト #{number} を {branch} にマージしました。",
+		"note.auto merged":
+			"CIが通ったので、プルリクエスト #{number} を {branch} に自動でマージしました。",
+		"note.auto fixing":
+			"CIが失敗したので、AIが自動で直します（{count}/{max} 回目）。",
 		"note.up to date": "ブランチはすでに最新の {branch} を含んでいます。",
 		"note.merging base":
 			"最新の {branch} を取り込みました。コンフリクト: {paths}",

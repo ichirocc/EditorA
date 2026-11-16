@@ -954,5 +954,12 @@
 	"ai setup missing item": "・{item}（⚙ →「{section}」）",
 	"ai network error": "接続できませんでした。電波の状態を確かめて、もう一度送ってください。（{error}）",
 	"ai no answer": "AI から {minutes} 分間応答がありませんでした。混雑しているか、止まっています。もう一度送るか、設定で別のモデルを選んでください。",
-	"ai fallback": "{from} が答えられないため（混雑・上限超過・提供終了）、{to} が代わりに答えます。"
+	"ai fallback": "{from} が答えられないため（混雑・上限超過・提供終了）、{to} が代わりに答えます。",
+	"ai auto fix": "CIが失敗したら自動で直す",
+	"ai auto merge": "CIが通ったら自動でマージ",
+	"ai auto merge confirm": "CIが通り、マージを妨げるものがなくなったら、確認なしでプルリクエスト #{number} を {branch} にマージします。よろしいですか？",
+	"ai auto fix message": "プルリクエストのCIが失敗しました: {names}。原因を調べて修正し、プッシュしてください。",
+	"ai auto fixing": "CIが失敗したので、AIが自動で直します（{count}/{max} 回目）。",
+	"ai auto fix gave up": "自動修正を {max} 回試してもCIが通らないため、自動修正をオフにしました。プルリクエストを確認してください。",
+	"ai auto merged": "CIが通ったので、プルリクエスト #{number} を {branch} に自動でマージしました。"
 }

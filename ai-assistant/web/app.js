@@ -31,6 +31,8 @@ let streaming = false;
 /** @type {Set<string>} */
 const expanded = new Set();
 let watchTimer;
+/** An automatic step is running (runAutopilot). */
+let autopiloting = false;
 
 /**
  * Creates an element. Children are nodes or text (never HTML).
@@ -465,6 +467,29 @@ function renderWorkflow() {
 			),
 		);
 	}
+	if (pr && !pr.merged && s.autopilot) {
+		const toggle = (key, label) =>
+			h(
+				"label",
+				{ className: "autopilot" },
+				h("input", {
+					type: "checkbox",
+					checked: s.autopilot[key],
+					disabled: busy,
+					onchange: (event) => setAutopilot(key, event.target),
+				}),
+				label,
+			);
+		appendParts(
+			$workflow,
+			h(
+				"div",
+				{ className: "autopilot-options" },
+				toggle("fix", t("autoFix")),
+				toggle("merge", t("autoMerge")),
+			),
+		);
+	}
 	if (pr && !pr.merged) {
 		buttons.push(
 			h(
@@ -526,8 +551,10 @@ async function step(path, body = {}) {
  * Sends a message and streams the assistant's turn.
  * @param {string} [preset] text to send instead of the input
  * @param {string} [display] shorter text shown in the chat for `preset`
+ * @param {{autoFix?:boolean}} [options] autoFix: the page fixes failed CI
+ *   by itself, as the user turned on for the pull request
  */
-async function send(preset, display) {
+async function send(preset, display, { autoFix = false } = {}) {
 	const text = (preset ?? $input.value).trim();
 	if (!text || busy) return;
 	if (preset === undefined) $input.value = "";
@@ -548,7 +575,7 @@ async function send(preset, display) {
 				Authorization: `Bearer ${token()}`,
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ text, display }),
+			body: JSON.stringify({ text, display, autoFix }),
 		});
 		if (!response.ok) {
 			const data = await response.json().catch(() => ({}));
@@ -713,12 +740,75 @@ async function merge() {
 }
 
 async function askToFixCi(failed) {
-	const request = t("fixCiMessage", {
+	const { text, display } = await ciFixRequest("fixCiMessage", failed);
+	send(text, display);
+}
+
+/**
+ * A request to fix failed CI: the string `key` with the failed checks'
+ * names, and the report on them for the assistant.
+ * @param {string} key
+ * @param {{name:string}[]} failed
+ */
+async function ciFixRequest(key, failed) {
+	const request = t(key, {
 		names: failed.map((check) => check.name).join(", "),
 	});
 	const data = await step("/api/session/ci-report");
 	const report = data?.report || "";
-	send(report ? `${request}\n\n${report}` : request, request);
+	return {
+		text: report ? `${request}\n\n${report}` : request,
+		display: request,
+	};
+}
+
+/**
+ * @param {"fix"|"merge"} key
+ * @param {HTMLInputElement} $input
+ */
+async function setAutopilot(key, $input) {
+	const s = state.session;
+	// Merging without asking is the user's call, once per pull request.
+	if (
+		key === "merge" &&
+		$input.checked &&
+		!confirm(
+			t("autoMergeConfirm", { number: s.pr.number, branch: s.baseBranch }),
+		)
+	) {
+		$input.checked = false;
+		return;
+	}
+	await step("/api/session/autopilot", { [key]: $input.checked });
+}
+
+/**
+ * Takes the step the user let the page take by itself, once one is due:
+ * fixing failed CI, or merging once it has passed.
+ */
+async function runAutopilot() {
+	const s = state.session;
+	if (busy || autopiloting || !s?.autopilotStep) return;
+	// The steps below refresh the state, which comes back here.
+	autopiloting = true;
+	try {
+		const { autopilot, pr, readiness } = s;
+		if (s.autopilotStep === "fix") {
+			// The server notes the fix in the chat.
+			const failed = readiness.checks.filter(
+				(check) => check.state === "failure",
+			);
+			const { text, display } = await ciFixRequest("autoFixMessage", failed);
+			await send(text, display, { autoFix: true });
+		} else if (s.autopilotStep === "merge") {
+			await step("/api/session/merge", { headSha: pr.headSha, auto: true });
+		} else if (s.autopilotStep === "give up") {
+			addLocalNote(t("autoFixGaveUp", { max: autopilot.max }), "error");
+			await step("/api/session/autopilot", { fix: false });
+		}
+	} finally {
+		autopiloting = false;
+	}
 }
 
 async function newSession() {
@@ -740,11 +830,15 @@ async function newSession() {
 
 /**
  * Re-checks the pull request while CI runs, so the user does not have to
- * keep tapping "Check status". It never merges.
+ * keep tapping "Check status". Once CI is done, it takes the step the user
+ * let the page take by itself, if one is due.
  */
 function watchCi(delay = WATCH_FIRST_DELAY, polls = 0) {
 	clearTimeout(watchTimer);
-	if (!state.session?.readiness?.pending || polls >= WATCH_MAX_POLLS) return;
+	if (!state.session?.readiness?.pending || polls >= WATCH_MAX_POLLS) {
+		runAutopilot();
+		return;
+	}
 	watchTimer = setTimeout(async () => {
 		if (busy) {
 			watchCi(delay, polls);

@@ -184,6 +184,9 @@ export function createAssistantApp({
 					headSha: s.pr.head?.sha || null,
 				},
 				readiness: s.readiness,
+				autopilot: { ...s.autopilot, max: s.maxAutoFixes },
+				// What the page does next by itself, as the user turned on.
+				autopilotStep: s.nextAutopilotStep(),
 				merging: !!s.merging,
 				conflicts: s.unresolvedConflicts,
 				changes: s.changeSet.list().map((change) => {
@@ -384,17 +387,23 @@ export function createAssistantApp({
 	/**
 	 * Streams one assistant turn as server-sent events.
 	 * @param {import("node:http").ServerResponse} res
-	 * @param {{text:string, display?:string}} body
+	 * @param {{text:string, display?:string, autoFix?:boolean}} body autoFix:
+	 *   the page fixes failed CI by itself, as the user turned on
 	 */
 	async function streamMessage(res, body) {
 		const text = String(body.text || "").trim();
 		if (!text) throw new HttpError(400, "The message is empty.");
 		if (busy) throw new HttpError(409, "The assistant is busy.");
+		const autoFix = body.autoFix === true;
 		busy = true;
 		try {
 			// A merged session is finished; the next request starts a new one.
 			if (session?.pr?.merged) resetSession();
 			await ensureSession();
+			// Refused before it reaches the chat: the page's state may be old.
+			if (autoFix && session.nextAutopilotStep() !== "fix") {
+				throw new HttpError(409, "There is no failed CI run to fix by itself.");
+			}
 		} catch (error) {
 			busy = false;
 			throw error;
@@ -413,6 +422,16 @@ export function createAssistantApp({
 			if (!res.writableFinished) controller?.abort();
 		});
 
+		if (autoFix) {
+			addLog({
+				kind: "note",
+				code: "auto fixing",
+				params: {
+					count: session.autopilot.fixes + 1,
+					max: session.maxAutoFixes,
+				},
+			});
+		}
 		const userEntry = addLog({
 			kind: "user",
 			text: String(body.display || text),
@@ -423,6 +442,7 @@ export function createAssistantApp({
 			await session.send(text, {
 				signal,
 				confirm: (request) => askApproval(request, signal, emit),
+				autoFix,
 				onEvent(event) {
 					if (event.type === "text") {
 						reply ??= addLog({ kind: "assistant", text: "" });
@@ -559,6 +579,15 @@ export function createAssistantApp({
 						},
 					);
 				}
+				// Merging without asking only as the user turned on, and only
+				// when the session would (a check ran and passed).
+				if (body.auto && s.nextAutopilotStep() !== "merge") {
+					throw new HttpError(
+						409,
+						"The pull request is not ready to merge by itself.",
+						{ code: "blocked", readiness: s.readiness },
+					);
+				}
 				try {
 					await s.merge();
 				} catch (error) {
@@ -568,16 +597,32 @@ export function createAssistantApp({
 							readiness: error.readiness,
 						});
 					}
+					// Not tried again by itself after an error GitHub gave.
+					if (body.auto) s.setAutopilot({ merge: false });
 					throw error;
 				}
 				addLog({
 					kind: "note",
 					level: "success",
-					code: "merged",
+					// The page merged by itself, as the user turned on.
+					code: body.auto ? "auto merged" : "merged",
 					params: { number: s.pr.number, branch: s.baseBranch },
 				});
 				return view();
 			}),
+		"POST /api/session/autopilot": async (body) => {
+			const choices = {};
+			for (const key of ["fix", "merge"]) {
+				if (typeof body[key] === "boolean") choices[key] = body[key];
+			}
+			try {
+				requireSession().setAutopilot(choices);
+			} catch (error) {
+				if (error instanceof HttpError) throw error;
+				throw new HttpError(409, error.message);
+			}
+			return view();
+		},
 		"POST /api/session/sync": () =>
 			locked(async () => {
 				const s = requireSession();

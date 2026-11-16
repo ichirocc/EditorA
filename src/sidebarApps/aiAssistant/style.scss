@@ -311,6 +311,20 @@
     .fix {
       margin-top: 4px;
     }
+
+    .autopilot-options {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-top: 6px;
+
+      label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+      }
+    }
   }
 
   .composer {
